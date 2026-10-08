@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use egui::{Event, Key, Modifiers, PointerButton, Pos2, pos2};
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 
 use super::{App, Config, Slot};
 
@@ -449,4 +449,71 @@ fn yolo_import_and_export_modes() {
         ["classes.txt", "img1.txt", "img10.txt", "img3.txt"]
     );
     assert_eq!(h.state().labels_dir.as_deref(), Some(out.as_path()));
+}
+
+fn untrack_via_menu(h: &mut Harness<'static, App>, name: &str) -> bool {
+    h.get_by_label_contains(&format!("] {name}"))
+        .click_secondary();
+    h.step();
+    h.step();
+    let item = h.get_by_label("Untrack empty image");
+    let enabled = !item.accesskit_node().is_disabled();
+    if enabled {
+        item.click();
+    } else {
+        h.key_press(Key::Escape);
+    }
+    h.step();
+    h.step();
+    assert!(
+        h.query_by_label("Untrack empty image").is_none(),
+        "menu closed for {name} (enabled={enabled})"
+    );
+    enabled
+}
+
+#[test]
+fn untrack_empty_image() {
+    let dir = make_dataset(&temp_root("untrack"));
+    let mut h = harness(&dir);
+    wait_loaded(&mut h);
+    h.key_press(Key::ArrowRight); // img1 becomes empty data
+    h.step();
+    h.key_press_modifiers(Modifiers::COMMAND, Key::S);
+    h.step();
+    assert!(dir.join("img1.txt").is_file());
+
+    assert!(untrack_via_menu(&mut h, "img1.png"));
+    assert!(!h.state().anns.contains_key("img1.png"));
+    assert!(
+        !dir.join("img1.txt").exists(),
+        "empty label file removed too"
+    );
+    assert!(
+        !untrack_via_menu(&mut h, "img2.png"),
+        "images with boxes can't be untracked"
+    );
+    assert!(h.state().anns.contains_key("img2.png"));
+
+    // Untracking the current image: leaving it must not re-create data.
+    h.key_press(Key::ArrowRight); // img2 -> img3
+    h.step();
+    h.key_press(Key::ArrowRight); // img3 -> img10, img3 becomes data
+    h.step();
+    h.key_press(Key::ArrowLeft); // img10 -> img3, img10 becomes data
+    h.step();
+    assert_eq!(cur_name(&h), "img3.png");
+    assert!(untrack_via_menu(&mut h, "img3.png"));
+    h.key_press(Key::ArrowRight);
+    h.step();
+    assert_eq!(cur_name(&h), "img10.png");
+    assert!(!h.state().anns.contains_key("img3.png"));
+
+    // With the filter on, untracking the current image moves to the next one.
+    toggle_filter(&mut h);
+    assert_eq!(visible_names(&h), ["img2.png", "img10.png"]);
+    assert!(untrack_via_menu(&mut h, "img10.png"));
+    assert_eq!(visible_names(&h), ["img2.png"]);
+    assert_eq!(cur_name(&h), "img2.png");
+    assert!(!h.state().has_unsaved());
 }

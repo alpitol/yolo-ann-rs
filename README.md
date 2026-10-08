@@ -52,7 +52,7 @@ In the image list, `*N` marks an image whose boxes were edited since the last im
 
 No label folder layout is assumed: labels come only from what you import (or from `.txt` files next to the images).
 
-**Annotation data.** An image has annotation data, possibly an empty box list, if it was imported from YOLO or COCO, restored from a backup, edited, or left with the arrow keys or a list click after being shown. Opening a folder or jumping because of a filter does not count. Exports include exactly these images. **Filter to annotation data**, below the image list, shows only them, which is useful for inspecting and editing a subset inside a folder that holds the whole dataset.
+**Annotation data.** An image has annotation data, possibly an empty box list, if it was imported from YOLO or COCO, restored from a backup, edited, or left with the arrow keys or a list click after being shown. Opening a folder or jumping because of a filter does not count. Exports include exactly these images. **Filter to annotation data**, below the image list, shows only them, which is useful for inspecting and editing a subset inside a folder that holds the whole dataset. If you visited an image by accident, right-click it in the list and choose **Untrack empty image**. This removes its empty data and deletes its label file if that file is empty. The option is available only for images that have no boxes and have not had boxes removed since the last import or export.
 
 - **Import YOLO** loads `<stem>.txt` files from a folder. The first imported folder becomes the *labels folder*. Folders imported on top of it are unsaved edits.
 - **Export YOLO** has two modes:

@@ -107,6 +107,8 @@ pub struct App {
     /// Show only images that have annotation data (an entry in `anns`).
     filter_data: bool,
     cur: Option<usize>,
+    /// The current image was untracked: leaving it must not re-create empty data.
+    cur_untracked: bool,
     classes: Vec<String>,
     cur_class: usize,
     anns: HashMap<String, ImageAnn>,
@@ -157,6 +159,7 @@ impl App {
             search: String::new(),
             filter_data: false,
             cur: None,
+            cur_untracked: false,
             classes: Vec::new(),
             cur_class: 0,
             anns: HashMap::new(),
@@ -367,7 +370,7 @@ impl App {
             && prev != idx
         {
             let name = self.images[prev].clone();
-            if user && !self.anns.contains_key(&name) {
+            if user && !self.cur_untracked && !self.anns.contains_key(&name) {
                 self.ensure_ann(&name);
                 self.mark_changed();
                 self.compute_visible();
@@ -375,6 +378,9 @@ impl App {
             if self.settings.autosave_labels {
                 self.save_one(&name);
             }
+        }
+        if self.cur != Some(idx) {
+            self.cur_untracked = false;
         }
         self.cur = Some(idx);
         self.selected = None;
@@ -421,6 +427,51 @@ impl App {
                     && (!self.filter_data || self.anns.contains_key(name))
             })
             .collect();
+    }
+
+    /// Empty data that may be untracked without losing anything: no boxes, and
+    /// none removed since the last import/export.
+    fn can_untrack(&self, name: &str) -> bool {
+        self.anns
+            .get(name)
+            .is_some_and(|a| a.boxes.is_empty() && a.exported.is_empty())
+    }
+
+    /// Undo an accidental visit: drop the empty annotation data of an image,
+    /// including an empty label file in the labels folder.
+    fn untrack(&mut self, idx: usize) {
+        let name = self.images[idx].clone();
+        if !self.can_untrack(&name) {
+            return;
+        }
+        if let Some(ld) = &self.labels_dir {
+            let p = model::label_path(ld, &name);
+            let empty = std::fs::read_to_string(&p).is_ok_and(|s| s.trim().is_empty());
+            if empty && let Err(e) = std::fs::remove_file(&p) {
+                self.set_status(format!("Could not remove {}: {e}", p.display()));
+                return;
+            }
+        }
+        self.anns.remove(&name);
+        if self.cur == Some(idx) {
+            self.cur_untracked = true;
+            self.selected = None;
+            self.drag = Drag::None;
+        }
+        self.mark_changed();
+        self.set_status(format!("Untracked {name}"));
+        self.compute_visible();
+        if self.visible_pos().is_none()
+            && let Some(cur) = self.cur
+            && let Some(&next) = self
+                .visible
+                .iter()
+                .find(|&&i| i > cur)
+                .or(self.visible.last())
+        {
+            self.go_to(next, false);
+        }
+        self.update_prefetch();
     }
 
     /// After the search text or the data filter changed: jump to the first
@@ -944,7 +995,8 @@ impl App {
     // ------------------------------------------------------------ keyboard
 
     fn handle_keys(&mut self, ctx: &egui::Context) {
-        if ctx.text_edit_focused() || self.show_quit_dialog {
+        // An open menu gets the keys (Escape closes it, arrows don't navigate behind it).
+        if ctx.text_edit_focused() || self.show_quit_dialog || egui::Popup::is_any_open(ctx) {
             return;
         }
         let (right, left, up, down, del, esc, undo, redo, save, open, fit, digit) =
@@ -1302,6 +1354,7 @@ impl App {
             }
         }
         let mut clicked = None;
+        let mut untrack = None;
         let out = area.show_rows(ui, row_h, self.visible.len(), |ui, range| {
             for vi in range {
                 let i = self.visible[vi];
@@ -1317,12 +1370,29 @@ impl App {
                 if self.anns.get(name).is_some_and(ImageAnn::modified) {
                     rt = rt.color(Color32::from_rgb(255, 200, 80));
                 }
-                if ui
-                    .add(egui::Button::selectable(Some(i) == self.cur, rt).truncate())
-                    .clicked()
-                {
+                let r = ui.add(egui::Button::selectable(Some(i) == self.cur, rt).truncate());
+                if r.clicked() {
                     clicked = Some(i);
                 }
+                r.context_menu(|ui| {
+                    let b = ui
+                        .add_enabled(
+                            self.can_untrack(name),
+                            egui::Button::new("Untrack empty image"),
+                        )
+                        .on_hover_text(
+                            "Remove the empty annotation data (and an empty label file) \
+                             created by visiting this image",
+                        )
+                        .on_disabled_hover_text(
+                            "Only images with empty annotation data and no removed boxes \
+                             can be untracked",
+                        );
+                    if b.clicked() {
+                        untrack = Some(i);
+                        ui.close();
+                    }
+                });
             }
         });
         let id = ui.make_persistent_id("image_list_view");
@@ -1341,6 +1411,9 @@ impl App {
         if let Some(i) = clicked {
             self.go_to(i, true);
             self.scroll_to_current = false;
+        }
+        if let Some(i) = untrack {
+            self.untrack(i);
         }
 
         // Current image information.
