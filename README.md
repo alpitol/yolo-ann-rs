@@ -1,6 +1,6 @@
 # yolo-ann-rs <img src="logo.png" width="48" alt="logo">
 
-A local Rust/egui rewrite of the web tool <https://lddl.github.io/yolo-ann/> for drawing YOLO/COCO bounding boxes.
+A local Rust/egui recreation of the web tool <https://lddl.github.io/yolo-ann/> for drawing YOLO/COCO bounding boxes.
 
 <img src="screenshot.png" alt="screenshot">
 
@@ -9,10 +9,11 @@ Main features
 * Simple and fast, with hotkeys
 * Handles large amount of images (unlike the web tool)
 
+More
 - Images are read lazily from disk, thus folders with thousands of images open instantly.
 - The next 6 and previous 2 images are decoded in background threads, so switching images is instant.
 - Annotations are backed up to a local file automatically, so nothing is lost on a crash, kill or power-off.
-- YOLO txt labels are read and written directly. COCO json import and export is supported, and the export is standard COCO detection json.
+- YOLO txt labels are read and written directly. COCO json import and export are supported.
 
 This application is fully vibe-coded with claude opus 5.5.
 
