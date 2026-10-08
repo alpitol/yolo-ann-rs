@@ -1860,24 +1860,6 @@ impl App {
                 StrokeKind::Middle,
             );
         }
-        // Center cross with 10% padding on each side, like the original tool.
-        let c = r.center();
-        let cross = Stroke::new(1.0, color.gamma_multiply(0.6));
-        painter.line_segment(
-            [
-                pos2(c.x, r.top() + r.height() * 0.1),
-                pos2(c.x, r.bottom() - r.height() * 0.1),
-            ],
-            cross,
-        );
-        painter.line_segment(
-            [
-                pos2(r.left() + r.width() * 0.1, c.y),
-                pos2(r.right() - r.width() * 0.1, c.y),
-            ],
-            cross,
-        );
-
         let label = self
             .classes
             .get(class)
