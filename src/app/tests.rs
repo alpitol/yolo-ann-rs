@@ -23,7 +23,8 @@ fn temp_root(name: &str) -> PathBuf {
             std::env::temp_dir().join(format!("yolo_ann_home_{}", std::process::id())),
         )
     };
-    root
+    // The app canonicalizes folders (/var -> /private/var on macOS, \\?\ on Windows).
+    root.canonicalize().unwrap()
 }
 
 fn make_dataset(root: &Path) -> PathBuf {
