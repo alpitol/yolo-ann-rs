@@ -37,6 +37,9 @@ struct Args {
     /// Write label files automatically when leaving an image.
     #[arg(long)]
     autosave: Option<bool>,
+    /// Print the license of yolo-ann and of the third-party software it includes, then exit.
+    #[arg(long)]
+    license: bool,
 }
 
 fn icon() -> egui::IconData {
@@ -66,6 +69,16 @@ fn main() -> eframe::Result {
     #[cfg(windows)]
     attach_parent_console();
     let args = Args::parse();
+    if args.license {
+        use std::io::Write;
+        let _ = write!(
+            std::io::stdout().lock(),
+            "yolo-ann\n========\n\n{}\n{}",
+            include_str!("../LICENSE"),
+            include_str!("../THIRD-PARTY-LICENSES.txt")
+        );
+        return Ok(());
+    }
     let workers = args.workers.unwrap_or_else(|| {
         let n = std::thread::available_parallelism()
             .map(|n| n.get())

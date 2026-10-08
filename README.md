@@ -19,10 +19,11 @@ This application is fully vibe-coded with claude opus 5.5.
 
 ## Download
 
-Prebuilt binaries for Linux (x86_64, aarch64), macOS (Apple Silicon, Intel) and Windows (x86_64) are on the [Releases](https://github.com/alpitol/yolo-ann-rs/releases) page. Unpack the archive and run `yolo-ann` (`yolo-ann.exe` on Windows).
+Prebuilt binaries for Linux (x86_64, aarch64), macOS (Apple Silicon, Intel) and Windows (x86_64) are on the [Releases](https://github.com/alpitol/yolo-ann-rs/releases) page. Download the one for your system and run it; there is nothing to install.
 
-- **Linux**: needs glibc 2.35 or newer (Ubuntu 22.04+) and an X11 or Wayland desktop with OpenGL.
-- **macOS**: the binary is not signed, so remove the quarantine flag once before running: `xattr -d com.apple.quarantine yolo-ann`.
+- **Windows**: `yolo-ann-<version>-x86_64-windows.exe`. Double-click it. The exe is not signed, so SmartScreen may warn; choose *More info* → *Run anyway*.
+- **Linux**: needs glibc 2.35 or newer (Ubuntu 22.04+) and an X11 or Wayland desktop with OpenGL. Make the file executable first: `chmod +x yolo-ann-*-linux`.
+- **macOS**: the binary is not signed, so make it executable and remove the quarantine flag once before running: `chmod +x yolo-ann-*-macos && xattr -d com.apple.quarantine yolo-ann-*-macos`.
 
 ## Build & run
 
@@ -39,6 +40,7 @@ cargo run --release
 | `--ahead N` / `--behind N` | Prefetch window (default 6 / 2) |
 | `--workers N` | Decoder threads |
 | `--autosave true` | Write the label file automatically when leaving an image |
+| `--license` | Print the license of yolo-ann and of the third-party software it includes |
 
 ## Hotkeys
 

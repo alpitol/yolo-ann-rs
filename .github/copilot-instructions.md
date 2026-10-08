@@ -13,7 +13,7 @@ cargo fmt --check && cargo clippy --all-targets   # both are clean; keep them th
 YOLO_ANN_BENCH_DIR=dir cargo test --release decode_speed -- --ignored --nocapture   # decode benchmark
 ```
 
-CI (`.github/workflows/ci.yml`) runs fmt, clippy `-D warnings` and tests on Linux/macOS/Windows. Releases: bump `version` in `Cargo.toml`, commit, then push a matching tag (`git tag v0.2.0 && git push origin v0.2.0`); `.github/workflows/release.yml` builds the archives and publishes the GitHub release.
+CI (`.github/workflows/ci.yml`) runs fmt, clippy `-D warnings` and tests on Linux/macOS/Windows. Releases: bump `version` in `Cargo.toml`, commit, then push a matching tag (`git tag v0.2.0 && git push origin v0.2.0`); `.github/workflows/release.yml` builds bare per-platform binaries and publishes the GitHub release. `THIRD-PARTY-LICENSES.txt` (embedded for `--license`) must be regenerated after dependency changes with `cargo about generate about.hbs -o THIRD-PARTY-LICENSES.txt`; CI fails if it is stale.
 
 Dev builds compile all dependencies with `opt-level = 3` (`[profile.dev.package."*"]`) because image decoding is unusably slow otherwise. Edition 2024 (let-chains `if let ... && let ...` are used throughout).
 

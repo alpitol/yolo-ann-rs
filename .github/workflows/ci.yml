@@ -20,6 +20,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about
+      - name: THIRD-PARTY-LICENSES.txt is up to date
+        run: |
+          cargo about generate --locked about.hbs -o THIRD-PARTY-LICENSES.txt
+          git diff --exit-code THIRD-PARTY-LICENSES.txt || {
+            echo "::error::Dependencies changed; run: cargo about generate about.hbs -o THIRD-PARTY-LICENSES.txt"
+            exit 1
+          }
 
   test:
     strategy:

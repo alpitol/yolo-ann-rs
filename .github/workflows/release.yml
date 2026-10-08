@@ -2,7 +2,7 @@ name: Release
 
 # Push a tag like `v0.1.0` (matching the version in Cargo.toml) to build the
 # binaries and publish them as a GitHub release. Running the workflow manually
-# only builds the archives and keeps them as workflow artifacts.
+# only builds the binaries and keeps them as workflow artifacts.
 on:
   push:
     tags: ["v*"]
@@ -21,11 +21,11 @@ jobs:
       matrix:
         include:
           # The oldest available Ubuntu, so the binary runs on older glibc versions too.
-          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
-          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
-          - { os: macos-latest, target: aarch64-apple-darwin }
-          - { os: macos-latest, target: x86_64-apple-darwin }
-          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, name: x86_64-linux }
+          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu, name: aarch64-linux }
+          - { os: macos-latest, target: aarch64-apple-darwin, name: aarch64-macos }
+          - { os: macos-latest, target: x86_64-apple-darwin, name: x86_64-macos }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, name: x86_64-windows, ext: .exe }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -55,22 +55,13 @@ jobs:
           fi
           cargo build --release --locked --target ${{ matrix.target }}
 
-      - name: Package
+      - name: Rename
         shell: bash
         run: |
-          name="yolo-ann-${GITHUB_REF_NAME//\//-}-${{ matrix.target }}"
-          mkdir -p "dist/$name"
-          cp README.md LICENSE "dist/$name/"
-          cd dist
-          if [[ "${{ matrix.target }}" == *windows* ]]; then
-            cp "../target/${{ matrix.target }}/release/yolo-ann.exe" "$name/"
-            7z a -tzip "$name.zip" "$name" > /dev/null
-          else
-            cp "../target/${{ matrix.target }}/release/yolo-ann" "$name/"
-            tar czf "$name.tar.gz" "$name"
-          fi
-          rm -r "$name"
-          ls -l
+          mkdir dist
+          cp "target/${{ matrix.target }}/release/yolo-ann${{ matrix.ext }}" \
+            "dist/yolo-ann-${GITHUB_REF_NAME//\//-}-${{ matrix.name }}${{ matrix.ext }}"
+          ls -l dist
 
       - uses: actions/upload-artifact@v7
         with:
