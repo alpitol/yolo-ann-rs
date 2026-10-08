@@ -1,5 +1,7 @@
 # yolo-ann (local)
 
+<img src="logo.png" width="96" alt="logo">
+
 A local Rust/egui rewrite of the web tool <https://lddl.github.io/yolo-ann/> for drawing YOLO bounding boxes.
 
 - Images are read lazily from disk. Only the current image and its neighbours are decoded, so folders with thousands of images open instantly.

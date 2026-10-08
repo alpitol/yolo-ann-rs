@@ -37,6 +37,18 @@ struct Args {
     autosave: Option<bool>,
 }
 
+fn icon() -> egui::IconData {
+    let img = image::load_from_memory(include_bytes!("../logo.png"))
+        .expect("embedded logo.png")
+        .into_rgba8();
+    let (width, height) = img.dimensions();
+    egui::IconData {
+        rgba: img.into_raw(),
+        width,
+        height,
+    }
+}
+
 fn main() -> eframe::Result {
     let args = Args::parse();
     let workers = args.workers.unwrap_or_else(|| {
@@ -58,7 +70,9 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1600.0, 1000.0])
-            .with_title("yolo-ann"),
+            .with_title("yolo-ann")
+            .with_app_id("yolo-ann")
+            .with_icon(std::sync::Arc::new(icon())),
         ..Default::default()
     };
     eframe::run_native(
