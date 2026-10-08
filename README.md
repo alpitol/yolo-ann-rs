@@ -44,7 +44,7 @@ cargo build --release
 | Ctrl+S | update the YOLO labels folder |
 | Ctrl+O | open image folder |
 
-In the image list, `*N` marks an image with unsaved changes and N boxes. `[N]` marks a visited image with N boxes.
+In the image list, `*N` marks an image whose boxes were edited since the last import/export (N boxes). `[N]` marks a visited image with N boxes.
 
 ## Saving & backup
 
@@ -64,7 +64,7 @@ No label folder layout is assumed: labels come only from what you import (or fro
   `~/.local/share/yolo-ann/backups/<folder>-<hash>.json` (one file per image folder). The previous session's file is kept as `*.prev.json`.
   When a folder whose backup contains unsaved annotations is opened, a banner offers **Restore / Ignore / Delete backup**. **Restore backup** loads any backup file manually.
 - Settings (last folder and image) are stored in `~/.config/yolo-ann/settings.json`.
-- Closing the window with unsaved changes asks whether to save first.
+- Closing the window asks whether to save first only if some image's boxes actually differ from what was last imported or exported (YOLO or COCO). Just browsing or importing never triggers it, and undoing an edit clears it. The backup holds exactly those edited images.
 
 ## Tests
 

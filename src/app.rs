@@ -132,8 +132,6 @@ pub struct App {
     backup_first_write: bool,
     backup_saved_at: Option<u64>,
     pending_restore: Option<Backup>,
-    /// Changes since last YOLO save / COCO export.
-    unsaved: bool,
     show_quit_dialog: bool,
     allow_close: bool,
     crop_job: Option<CropJob>,
@@ -180,7 +178,6 @@ impl App {
             backup_first_write: true,
             backup_saved_at: None,
             pending_restore: None,
-            unsaved: false,
             show_quit_dialog: false,
             allow_close: false,
             crop_job: None,
@@ -230,7 +227,6 @@ impl App {
 
     fn mark_changed(&mut self) {
         self.backup_gen += 1;
-        self.unsaved = true;
     }
 
     fn cur_name(&self) -> Option<&str> {
@@ -250,6 +246,15 @@ impl App {
                 dirty: true,
                 ..Default::default()
             })
+    }
+
+    /// Images whose boxes were edited since the last import/export.
+    fn unsaved_count(&self) -> usize {
+        self.anns.values().filter(|a| a.modified()).count()
+    }
+
+    fn has_unsaved(&self) -> bool {
+        self.anns.values().any(ImageAnn::modified)
     }
 
     fn data_count(&self) -> usize {
@@ -278,7 +283,6 @@ impl App {
         self.cur = None;
         self.selected = None;
         self.drag = Drag::None;
-        self.unsaved = false;
         self.backup_gen = 0;
         self.backup_written_gen = 0;
         self.backup_first_write = true;
@@ -605,8 +609,11 @@ impl App {
                 ok += 1;
             }
         }
+        // Everything that matches the labels folder is safely stored.
+        for a in self.anns.values_mut().filter(|a| !a.dirty) {
+            a.mark_exported();
+        }
         if ok == dirty.len() {
-            self.unsaved = false;
             let ld = self
                 .labels_dir
                 .as_ref()
@@ -644,7 +651,7 @@ impl App {
         let images: std::collections::BTreeMap<String, Vec<BBox>> = self
             .anns
             .iter()
-            .filter(|(_, a)| a.dirty)
+            .filter(|(_, a)| a.modified())
             .map(|(n, a)| (n.clone(), a.boxes.clone()))
             .collect();
         if images.is_empty() && self.pending_restore.is_some() {
@@ -714,6 +721,7 @@ impl App {
                     let ann = self.ensure_ann(&name);
                     ann.snapshot();
                     ann.boxes = boxes;
+                    ann.mark_exported();
                 }
                 self.selected = None;
                 self.mark_changed();
@@ -748,7 +756,8 @@ impl App {
         let json = model::export_coco(&self.classes, &entries);
         match model::write_atomic(path, json.to_string().as_bytes()) {
             Ok(()) => {
-                self.unsaved = false;
+                self.anns.values_mut().for_each(ImageAnn::mark_exported);
+                self.backup_gen += 1;
                 self.set_status(format!(
                     "Exported {} images to {}",
                     self.anns.len(),
@@ -789,6 +798,7 @@ impl App {
                 Some(ann) => {
                     ann.snapshot();
                     ann.boxes = boxes;
+                    ann.mark_exported();
                     ann.dirty = !is_target;
                 }
                 None => {
@@ -821,7 +831,11 @@ impl App {
                 &model::label_path(dir, name),
                 model::format_yolo(&ann.boxes).as_bytes(),
             ) {
-                Ok(()) => self.anns.get_mut(name).unwrap().dirty = false,
+                Ok(()) => {
+                    let a = self.anns.get_mut(name).unwrap();
+                    a.dirty = false;
+                    a.mark_exported();
+                }
                 Err(e) => {
                     failed += 1;
                     self.status = format!("Save failed: {e:#}");
@@ -834,7 +848,6 @@ impl App {
         self.settings.save();
         self.backup_gen += 1;
         if failed == 0 {
-            self.unsaved = false;
             self.write_classes_if_missing();
             self.set_status(format!(
                 "Exported {} label files to {}",
@@ -1081,7 +1094,7 @@ impl App {
             {
                 self.load_classes(&p);
             }
-            let export_label = if self.unsaved {
+            let export_label = if self.has_unsaved() {
                 "💾 Export YOLO*"
             } else {
                 "💾 Export YOLO"
@@ -1295,13 +1308,13 @@ impl App {
                 let name = &self.images[i];
                 let mut text = String::new();
                 match self.anns.get(name) {
-                    Some(a) if a.dirty => text.push_str(&format!("*{} ", a.boxes.len())),
+                    Some(a) if a.modified() => text.push_str(&format!("*{} ", a.boxes.len())),
                     Some(a) => text.push_str(&format!("[{}] ", a.boxes.len())),
                     None => {}
                 }
                 text.push_str(name);
                 let mut rt = RichText::new(text);
-                if self.anns.get(name).map(|a| a.dirty).unwrap_or(false) {
+                if self.anns.get(name).is_some_and(ImageAnn::modified) {
                     rt = rt.color(Color32::from_rgb(255, 200, 80));
                 }
                 if ui
@@ -1950,12 +1963,12 @@ impl App {
         if !self.show_quit_dialog {
             return;
         }
-        let dirty = self.anns.values().filter(|a| a.dirty).count();
+        let n = self.unsaved_count();
         let mut action = 0;
         egui::Modal::new(egui::Id::new("quit_dialog")).show(ctx, |ui| {
             ui.heading("Unsaved annotations");
             ui.label(format!(
-                "{dirty} images have changes not written to YOLO label files / exported COCO."
+                "{n} images have box edits that are not saved to YOLO label files or exported to COCO."
             ));
             if let Some(bp) = &self.backup_path {
                 ui.label(
@@ -1978,7 +1991,7 @@ impl App {
         match action {
             1 => {
                 self.save_yolo();
-                if !self.unsaved {
+                if !self.has_unsaved() {
                     self.allow_close = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
@@ -2004,7 +2017,7 @@ impl eframe::App for App {
                 self.save_yolo();
             }
             self.write_backup(true);
-            if self.unsaved {
+            if self.has_unsaved() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.show_quit_dialog = true;
             }
@@ -2036,7 +2049,7 @@ impl eframe::App for App {
             }
         }
 
-        let dirty_mark = if self.unsaved { " *" } else { "" };
+        let dirty_mark = if self.has_unsaved() { " *" } else { "" };
         let title = match (self.cur_name(), &self.image_dir) {
             (Some(n), Some(d)) => format!(
                 "{n}{dirty_mark} — {} [{}/{}] — yolo-ann",

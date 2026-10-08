@@ -66,6 +66,9 @@ pub struct ImageAnn {
     pub boxes: Vec<BBox>,
     /// Not yet written to the YOLO labels folder.
     pub dirty: bool,
+    /// Boxes as of the last import or export (YOLO or COCO). Differing boxes are
+    /// real edits that would be lost on quit.
+    pub exported: Vec<BBox>,
     pub undo: Vec<Vec<BBox>>,
     pub redo: Vec<Vec<BBox>>,
 }
@@ -73,9 +76,18 @@ pub struct ImageAnn {
 impl ImageAnn {
     pub fn clean(boxes: Vec<BBox>) -> Self {
         ImageAnn {
+            exported: boxes.clone(),
             boxes,
             ..Default::default()
         }
+    }
+
+    pub fn modified(&self) -> bool {
+        self.boxes != self.exported
+    }
+
+    pub fn mark_exported(&mut self) {
+        self.exported = self.boxes.clone();
     }
 
     /// Call before every mutation.

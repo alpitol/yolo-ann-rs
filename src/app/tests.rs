@@ -202,7 +202,7 @@ fn draw_select_move_delete_undo_save() {
         "{bx:?}"
     );
     assert_eq!(h.state().selected, Some(0), "new box is selected");
-    assert!(h.state().unsaved);
+    assert!(h.state().has_unsaved());
 
     // Tiny drags are discarded.
     h.key_press(Key::Escape);
@@ -242,7 +242,7 @@ fn draw_select_move_delete_undo_save() {
 
     h.key_press_modifiers(Modifiers::COMMAND, Key::S);
     h.step();
-    assert!(!h.state().unsaved);
+    assert!(!h.state().has_unsaved());
     let text = std::fs::read_to_string(dir.join("img1.txt")).unwrap();
     let parsed = crate::model::parse_yolo(&text);
     assert_eq!(parsed.len(), 1);
@@ -341,7 +341,7 @@ fn data_filter_and_visit_rules() {
     assert_eq!(visible_names(&h), ["img2.png"]);
     assert_eq!(cur_name(&h), "img2.png");
     assert!(!h.state().anns.contains_key("img1.png"));
-    assert!(!h.state().unsaved);
+    assert!(!h.state().has_unsaved());
 
     // Unfiltered: leaving images with arrow keys makes them (empty) data.
     toggle_filter(&mut h);
@@ -356,6 +356,10 @@ fn data_filter_and_visit_rules() {
     assert!(
         !h.state().anns.contains_key("img10.png"),
         "current not yet left"
+    );
+    assert!(
+        !h.state().has_unsaved(),
+        "visiting is not an edit: no quit prompt"
     );
 
     toggle_filter(&mut h);
@@ -380,6 +384,24 @@ fn data_filter_and_visit_rules() {
     h.state_mut().import_coco(&coco);
     h.step();
     assert_eq!(visible_names(&h), ["img2.png", "img3.png", "img11.png"]);
+    assert!(!h.state().has_unsaved(), "imported data is not an edit");
+
+    // Drawing is an edit; undoing it is not.
+    wait_loaded(&mut h);
+    let (p0, p1) = (norm_to_screen(&h, 0.1, 0.1), norm_to_screen(&h, 0.3, 0.3));
+    drag(&mut h, p0, p1);
+    assert!(h.state().has_unsaved());
+    let bp = h.state().backup_path.clone().unwrap();
+    h.state_mut().write_backup(true);
+    let b = crate::backup::load_backup(&bp).unwrap();
+    assert_eq!(
+        b.images.keys().collect::<Vec<_>>(),
+        ["img3.png"],
+        "backup holds only edited images"
+    );
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.step();
+    assert!(!h.state().has_unsaved());
 }
 
 #[test]
@@ -412,7 +434,7 @@ fn yolo_import_and_export_modes() {
         std::fs::read_to_string(labels.join("img1.txt")).unwrap(),
         ""
     );
-    assert!(!h.state().unsaved);
+    assert!(!h.state().has_unsaved());
 
     // Export to a new folder: everything with data is written there.
     let out = root.join("new_labels");
