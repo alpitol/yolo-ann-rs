@@ -580,39 +580,69 @@ pub fn import_coco(
     })
 }
 
-/// COCO export in the same layout as the original yolo-ann tool
-/// (category id = class index + 1, image id = list index + 1).
+/// Standard COCO detection json: category id = class index + 1, image ids are
+/// 1-based in list order, pixel coordinates rounded to 0.01.
 pub fn export_coco(
     classes: &[String],
     images: &[(String, u32, u32, Vec<BBox>)],
 ) -> serde_json::Value {
     use serde_json::json;
+    let r2 = |v: f64| (v * 100.0).round() / 100.0;
     let categories: Vec<_> = classes
         .iter()
         .enumerate()
-        .map(|(i, n)| json!({"supercategory": "none", "id": i + 1, "name": n}))
+        .map(|(i, n)| json!({"id": i + 1, "name": n, "supercategory": ""}))
         .collect();
     let mut imgs = Vec::new();
     let mut anns = Vec::new();
-    let mut id = 0;
     for (idx, (name, w, h, boxes)) in images.iter().enumerate() {
         imgs.push(json!({"id": idx + 1, "file_name": name, "width": w, "height": h}));
         for b in boxes {
             let (x, y, bw, bh) = b.normalized().to_pixels(*w, *h);
-            id += 1;
+            let (x, y, bw, bh) = (r2(x), r2(y), r2(bw), r2(bh));
             anns.push(json!({
-                "segmentation": [[x, y, x, y + bh, x + bw, y + bh, x + bw, y]],
-                "area": bw * bh,
-                "iscrowd": 0,
-                "ignore": 0,
+                "id": anns.len() + 1,
                 "image_id": idx + 1,
-                "bbox": [x, y, bw, bh],
                 "category_id": b.class + 1,
-                "id": id,
+                "bbox": [x, y, bw, bh],
+                "area": r2(bw * bh),
+                "iscrowd": 0,
             }));
         }
     }
-    json!({"images": imgs, "type": "instances", "annotations": anns, "categories": categories})
+    json!({
+        "info": {"description": format!("yolo-ann {}", env!("CARGO_PKG_VERSION"))},
+        "licenses": [],
+        "categories": categories,
+        "images": imgs,
+        "annotations": anns,
+    })
+}
+
+/// Readable json for a COCO file: top-level keys on their own lines and one
+/// compact array element (image, annotation, ...) per line.
+pub fn coco_to_string(v: &serde_json::Value) -> String {
+    let Some(obj) = v.as_object() else {
+        return v.to_string();
+    };
+    let mut out = String::from("{\n");
+    for (i, (k, val)) in obj.iter().enumerate() {
+        out.push_str(&format!("  {}: ", serde_json::Value::from(k.as_str())));
+        match val.as_array() {
+            Some(arr) if !arr.is_empty() => {
+                out.push_str("[\n");
+                for (j, e) in arr.iter().enumerate() {
+                    let sep = if j + 1 < arr.len() { "," } else { "" };
+                    out.push_str(&format!("    {e}{sep}\n"));
+                }
+                out.push_str("  ]");
+            }
+            _ => out.push_str(&val.to_string()),
+        }
+        out.push_str(if i + 1 < obj.len() { ",\n" } else { "\n" });
+    }
+    out.push_str("}\n");
+    out
 }
 
 #[cfg(test)]
@@ -665,7 +695,16 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("yolo_ann_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("c.json");
-        std::fs::write(&p, json.to_string()).unwrap();
+        let text = coco_to_string(&json);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&text).unwrap(),
+            json
+        );
+        assert!(text.starts_with("{\n  \"info\": "));
+        assert!(text.contains(
+            "\n    {\"id\":1,\"image_id\":1,\"category_id\":2,\"bbox\":[100.0,100.0,100.0,100.0],\"area\":10000.0,\"iscrowd\":0}\n"
+        ));
+        std::fs::write(&p, text).unwrap();
         let known: std::collections::HashSet<&str> = ["x.jpg"].into_iter().collect();
         let imp = import_coco(&p, &classes, &dir, &known).unwrap();
         let got = &imp.images["x.jpg"][0];

@@ -824,7 +824,7 @@ impl App {
             entries.push((name.clone(), w, h, self.anns[name].boxes.clone()));
         }
         let json = model::export_coco(&self.classes, &entries);
-        match model::write_atomic(path, json.to_string().as_bytes()) {
+        match model::write_atomic(path, model::coco_to_string(&json).as_bytes()) {
             Ok(()) => {
                 self.anns.values_mut().for_each(ImageAnn::mark_exported);
                 self.backup_gen += 1;

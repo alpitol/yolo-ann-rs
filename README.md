@@ -1,6 +1,6 @@
 # yolo-ann-rs <img src="logo.png" width="48" alt="logo">
 
-A local Rust/egui rewrite of the web tool <https://lddl.github.io/yolo-ann/> for drawing YOLO bounding boxes.
+A local Rust/egui rewrite of the web tool <https://lddl.github.io/yolo-ann/> for drawing YOLO/COCO bounding boxes.
 
 <img src="screenshot.png" alt="screenshot">
 
@@ -12,7 +12,7 @@ Main features
 - Images are read lazily from disk, thus folders with thousands of images open instantly.
 - The next 6 and previous 2 images are decoded in background threads, so switching images is instant.
 - Annotations are backed up to a local file automatically, so nothing is lost on a crash, kill or power-off.
-- YOLO txt labels are read and written directly. COCO json import and export is supported (the export has the same format as the original tool).
+- YOLO txt labels are read and written directly. COCO json import and export is supported, and the export is standard COCO detection json.
 
 This application is fully vibe-coded with claude opus 5.5.
 
@@ -79,7 +79,7 @@ Labels come only from what you import, from `.txt` files next to the images, or 
   - *Export to another folder* writes every image with data to a new or existing folder, which then becomes the labels folder.
 
   Ctrl+S without a labels folder asks for one. `classes.txt` is added if the folder has none. Writes are atomic.
-- **Import COCO** matches categories to classes by name. **Export COCO** writes a json in the same format as the original web tool (category id = class + 1). The default file name is `<folder>_HUMAN_FIXED.json`.
+- **Import COCO** matches categories to classes by name. **Export COCO** writes standard COCO detection json (`info`, `licenses`, `categories`, `images`, `annotations`) with one image or annotation per line. Category id = class + 1, and coordinates are pixels rounded to 0.01. Images with empty annotation data are included as background images. The default file name is `<folder>_HUMAN_FIXED.json`.
 - **Crop & Save** writes one crop per box to a chosen folder.
 - **Automatic backup:** all unsaved annotations are written about 2 s after every change, and on every image switch and on exit, to
   `~/.local/share/yolo-ann/backups/<folder>-<hash>.json` (one file per image folder). The previous session's file is kept as `*.prev.json`.
