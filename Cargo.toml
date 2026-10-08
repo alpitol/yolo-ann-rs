@@ -1,0 +1,27 @@
+[package]
+name = "yolo-ann"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+dirs = "7.0.0"
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+egui = "0.36"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "bmp", "webp"] }
+imagesize = "0.15.0"
+rfd = "0.17.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+
+[profile.release]
+debug = false
+lto = "thin"
+
+# Image decoding is painfully slow unoptimized; keep deps optimized in dev builds too.
+[profile.dev.package."*"]
+opt-level = 3
+
+[dev-dependencies]
+egui_kittest = { version = "0.36", features = ["eframe"] }
