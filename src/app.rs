@@ -1051,14 +1051,13 @@ impl App {
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             if ui
-                .button("📂 Open folder")
+                .button("📂 Open image folder")
                 .on_hover_text("Ctrl+O")
                 .clicked()
             {
                 self.dialog_open_dir();
             }
             ui.separator();
-            ui.label(RichText::new("YOLO").weak());
             if ui
                 .button("Import YOLO")
                 .on_hover_text(
@@ -1072,7 +1071,7 @@ impl App {
                 self.import_yolo(&p, false);
             }
             if ui
-                .button("Classes")
+                .button("YOLO classes")
                 .on_hover_text("Load classes.txt / *.names")
                 .clicked()
                 && let Some(p) = rfd::FileDialog::new()
@@ -1125,7 +1124,6 @@ impl App {
                 self.settings.save();
             }
             ui.separator();
-            ui.label(RichText::new("COCO").weak());
             if ui.button("Import COCO").clicked()
                 && let Some(p) = rfd::FileDialog::new()
                     .set_directory(
@@ -1368,7 +1366,7 @@ impl App {
         });
         if self.classes.is_empty() {
             ui.label(
-                RichText::new("No classes loaded — use \"Classes\"").color(Color32::LIGHT_RED),
+                RichText::new("No classes loaded — use \"YOLO classes\"").color(Color32::LIGHT_RED),
             );
         }
         let class_h = (ui.available_height() * 0.4).max(80.0);
@@ -1416,7 +1414,7 @@ impl App {
                     ("Esc", "deselect / cancel"),
                     ("Ctrl+Z / Ctrl+Y", "undo / redo (per image)"),
                     ("Ctrl+S", "update YOLO labels folder"),
-                    ("Ctrl+O", "open folder"),
+                    ("Ctrl+O", "open image folder"),
                 ] {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(k).monospace().strong());
@@ -1564,7 +1562,11 @@ impl App {
         // Zoom around the cursor.
         if let Some(p) = resp.hover_pos() {
             let (scroll, zd) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
-            let factor = if zd != 1.0 { zd } else { 1.002f32.powf(scroll) };
+            let factor = if zd != 1.0 {
+                zd
+            } else {
+                1.002f32.powf(scroll * 6.0)
+            };
             if factor != 1.0 {
                 let s = fit * self.zoom;
                 let min = rect.center() + self.pan - img_px * s / 2.0;

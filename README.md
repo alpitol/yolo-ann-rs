@@ -42,7 +42,7 @@ cargo build --release
 | Esc | deselect / cancel drag |
 | Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z | undo / redo (per image) |
 | Ctrl+S | update the YOLO labels folder |
-| Ctrl+O | open folder |
+| Ctrl+O | open image folder |
 
 In the image list, `*N` marks an image with unsaved changes and N boxes. `[N]` marks a visited image with N boxes.
 
