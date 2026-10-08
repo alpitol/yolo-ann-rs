@@ -11,7 +11,8 @@ use crate::model::{BBox, write_atomic};
 #[derive(Serialize, Deserialize, Default)]
 pub struct Backup {
     pub image_dir: PathBuf,
-    pub labels_dir: PathBuf,
+    #[serde(default)]
+    pub labels_dir: Option<PathBuf>,
     pub classes: Vec<String>,
     /// Unix seconds.
     pub saved_at: u64,

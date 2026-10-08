@@ -64,7 +64,7 @@ impl BBox {
 #[derive(Clone, Debug, Default)]
 pub struct ImageAnn {
     pub boxes: Vec<BBox>,
-    /// Differs from the YOLO label file on disk.
+    /// Not yet written to the YOLO labels folder.
     pub dirty: bool,
     pub undo: Vec<Vec<BBox>>,
     pub redo: Vec<Vec<BBox>>,
@@ -187,25 +187,29 @@ pub fn label_path(labels_dir: &Path, image_name: &str) -> PathBuf {
     p
 }
 
-/// Guess YOLO labels directory: `.../images[/sub]` -> `.../labels[/sub]` if it exists, else the image dir.
-pub fn guess_labels_dir(image_dir: &Path) -> PathBuf {
-    let comps: Vec<_> = image_dir.components().collect();
-    for i in (0..comps.len()).rev() {
-        if comps[i].as_os_str() == "images" {
-            let mut p = PathBuf::new();
-            for (j, c) in comps.iter().enumerate() {
-                if j == i {
-                    p.push("labels");
-                } else {
-                    p.push(c.as_os_str());
-                }
+/// Reads `<stem>.txt` for every image that has one in `dir`.
+/// Returns image name -> boxes, and the number of unreadable files.
+pub fn read_yolo_dir(dir: &Path, images: &[String]) -> Result<(HashMap<String, Vec<BBox>>, usize)> {
+    let present: std::collections::HashSet<std::ffi::OsString> = std::fs::read_dir(dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
+    let mut out = HashMap::new();
+    let mut errors = 0;
+    for name in images {
+        let p = label_path(dir, name);
+        if !p.file_name().is_some_and(|f| present.contains(f)) {
+            continue;
+        }
+        match std::fs::read_to_string(&p) {
+            Ok(t) => {
+                out.insert(name.clone(), parse_yolo(&t));
             }
-            if p.is_dir() {
-                return p;
-            }
+            Err(_) => errors += 1,
         }
     }
-    image_dir.to_path_buf()
+    Ok((out, errors))
 }
 
 pub fn parse_yolo(text: &str) -> Vec<BBox> {
@@ -245,15 +249,6 @@ pub fn format_yolo(boxes: &[BBox]) -> String {
     s
 }
 
-/// Reads label file; missing file means no boxes.
-pub fn read_yolo_file(path: &Path) -> Result<Vec<BBox>> {
-    match std::fs::read_to_string(path) {
-        Ok(t) => Ok(parse_yolo(&t)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
-    }
-}
-
 /// Write via temp file + rename so a crash never leaves a half-written file.
 pub fn write_atomic(path: &Path, data: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
@@ -279,29 +274,19 @@ pub fn read_classes(path: &Path) -> Result<Vec<String>> {
         .collect())
 }
 
-/// Look for a classes file near the images.
-pub fn find_classes_file(image_dir: &Path, labels_dir: &Path) -> Option<PathBuf> {
-    let mut dirs = vec![image_dir.to_path_buf(), labels_dir.to_path_buf()];
-    if let Some(p) = image_dir.parent() {
-        dirs.push(p.to_path_buf());
-    }
-    for d in &dirs {
-        for name in ["classes.txt", "obj.names", "classes.names"] {
-            let p = d.join(name);
-            if p.is_file() {
-                return Some(p);
-            }
-        }
-        if let Ok(rd) = std::fs::read_dir(d) {
-            for e in rd.flatten() {
-                let p = e.path();
-                if p.extension().and_then(|e| e.to_str()) == Some("names") {
-                    return Some(p);
-                }
-            }
+/// Look for a classes file (classes.txt, obj.names, *.names) directly in `dir`.
+pub fn find_classes_file(dir: &Path) -> Option<PathBuf> {
+    for name in ["classes.txt", "obj.names", "classes.names"] {
+        let p = dir.join(name);
+        if p.is_file() {
+            return Some(p);
         }
     }
-    None
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.extension().and_then(|e| e.to_str()) == Some("names"))
 }
 
 pub struct CocoImport {

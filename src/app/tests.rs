@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use egui::{Event, Key, Modifiers, PointerButton, Pos2, pos2};
 use egui_kittest::Harness;
+use egui_kittest::kittest::Queryable;
 
 use super::{App, Config, Slot};
 
@@ -132,8 +133,11 @@ fn natural_order_navigation_and_class_hotkeys() {
     h.key_press(Key::ArrowRight);
     h.step();
     assert_eq!(cur_name(&h), "img2.png");
-    // Existing YOLO label was loaded lazily.
+    // Label files next to the images are autoselected.
+    assert!(h.state().labels_auto);
+    assert_eq!(h.state().labels_dir.as_deref(), Some(dir.as_path()));
     assert_eq!(h.state().anns["img2.png"].boxes.len(), 1);
+    assert!(!h.state().anns["img2.png"].dirty);
     assert_eq!(h.state().anns["img2.png"].boxes[0].class, 1);
 
     h.key_press(Key::ArrowLeft);
@@ -285,12 +289,12 @@ fn coco_import_export_roundtrip() {
     h.state_mut().export_coco(&out);
     let json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
-    assert_eq!(json["images"].as_array().unwrap().len(), 5);
     assert_eq!(
-        json["annotations"].as_array().unwrap().len(),
+        json["images"].as_array().unwrap().len(),
         1,
-        "on-disk label of img2 included"
+        "only images with annotation data"
     );
+    assert_eq!(json["annotations"].as_array().unwrap().len(), 1);
     let bbox = &json["annotations"][0]["bbox"];
     assert!(
         (bbox[0].as_f64().unwrap() - 160.0).abs() < 0.01
@@ -307,4 +311,120 @@ fn coco_import_export_roundtrip() {
     assert_eq!(ann.boxes.len(), 1);
     assert_eq!(ann.boxes[0].class, 1);
     assert!((ann.boxes[0].x0 - 0.4).abs() < 1e-6);
+}
+
+fn visible_names(h: &Harness<'static, App>) -> Vec<String> {
+    let a = h.state();
+    a.visible.iter().map(|&i| a.images[i].clone()).collect()
+}
+
+fn toggle_filter(h: &mut Harness<'static, App>) {
+    h.get_by_label_contains("Filter to annotation data").click();
+    h.step();
+    h.step();
+}
+
+#[test]
+fn data_filter_and_visit_rules() {
+    let dir = make_dataset(&temp_root("filter"));
+    let mut h = harness(&dir);
+    wait_loaded(&mut h);
+    assert_eq!(cur_name(&h), "img1.png");
+    assert!(
+        !h.state().anns.contains_key("img1.png"),
+        "the first image is not data just by being shown"
+    );
+
+    // Filtering away from img1 must not turn it into data.
+    toggle_filter(&mut h);
+    assert!(h.state().filter_data);
+    assert_eq!(visible_names(&h), ["img2.png"]);
+    assert_eq!(cur_name(&h), "img2.png");
+    assert!(!h.state().anns.contains_key("img1.png"));
+    assert!(!h.state().unsaved);
+
+    // Unfiltered: leaving images with arrow keys makes them (empty) data.
+    toggle_filter(&mut h);
+    assert_eq!(visible_names(&h).len(), 5);
+    h.key_press(Key::ArrowRight); // img2 -> img3
+    h.step();
+    h.key_press(Key::ArrowRight); // img3 -> img10, img3 becomes empty data
+    h.step();
+    assert_eq!(cur_name(&h), "img10.png");
+    assert!(h.state().anns["img3.png"].boxes.is_empty());
+    assert!(h.state().anns["img3.png"].dirty);
+    assert!(
+        !h.state().anns.contains_key("img10.png"),
+        "current not yet left"
+    );
+
+    toggle_filter(&mut h);
+    assert_eq!(visible_names(&h), ["img2.png", "img3.png"]);
+    assert_eq!(cur_name(&h), "img2.png");
+    assert!(
+        !h.state().anns.contains_key("img10.png"),
+        "filter jump doesn't mark"
+    );
+    h.key_press(Key::ArrowRight);
+    h.step();
+    assert_eq!(cur_name(&h), "img3.png");
+
+    // COCO import adds its images to the filtered list.
+    let coco = dir.parent().unwrap().join("c.json");
+    std::fs::write(
+        &coco,
+        r#"{"images":[{"id":1,"file_name":"img11.png","width":400,"height":200}],
+            "annotations":[],"categories":[{"id":1,"name":"ship"}]}"#,
+    )
+    .unwrap();
+    h.state_mut().import_coco(&coco);
+    h.step();
+    assert_eq!(visible_names(&h), ["img2.png", "img3.png", "img11.png"]);
+}
+
+#[test]
+fn yolo_import_and_export_modes() {
+    let root = temp_root("yolo_io");
+    let dir = make_dataset(&root);
+    std::fs::remove_file(dir.join("img2.txt")).unwrap();
+    let labels = root.join("my_labels");
+    std::fs::create_dir_all(&labels).unwrap();
+    std::fs::write(labels.join("img3.txt"), "0 0.5 0.5 0.2 0.2\n").unwrap();
+    std::fs::write(labels.join("img10.txt"), "").unwrap();
+
+    let mut h = harness(&dir);
+    wait_loaded(&mut h);
+    assert!(h.state().labels_dir.is_none(), "no label folder guessing");
+    assert!(h.state().anns.is_empty());
+
+    h.state_mut().import_yolo(&labels, false);
+    h.step();
+    assert_eq!(h.state().labels_dir.as_deref(), Some(labels.as_path()));
+    assert_eq!(h.state().anns.len(), 2, "empty label file is data too");
+    assert!(h.state().anns.values().all(|a| !a.dirty));
+
+    // Update existing folder: only changed files are written.
+    h.key_press(Key::ArrowRight); // img1 left -> empty data
+    h.step();
+    h.key_press_modifiers(Modifiers::COMMAND, Key::S);
+    h.step();
+    assert_eq!(
+        std::fs::read_to_string(labels.join("img1.txt")).unwrap(),
+        ""
+    );
+    assert!(!h.state().unsaved);
+
+    // Export to a new folder: everything with data is written there.
+    let out = root.join("new_labels");
+    h.state_mut().export_yolo(&out);
+    let mut written: Vec<_> = std::fs::read_dir(&out)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    written.sort();
+    assert_eq!(
+        written,
+        ["classes.txt", "img1.txt", "img10.txt", "img3.txt"]
+    );
+    assert_eq!(h.state().labels_dir.as_deref(), Some(out.as_path()));
 }

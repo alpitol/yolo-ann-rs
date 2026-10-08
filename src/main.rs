@@ -13,10 +13,11 @@ use clap::Parser;
 struct Args {
     /// Folder of images to annotate (defaults to the last opened folder).
     image_dir: Option<PathBuf>,
-    /// YOLO labels folder. Default: `../labels` if the image folder is named `images`, else the image folder.
+    /// Import YOLO .txt labels from this folder; they are also saved back here.
+    /// Default: the image folder, if it contains label files.
     #[arg(short, long)]
     labels: Option<PathBuf>,
-    /// Class names file, one per line (classes.txt / *.names). Auto-detected if omitted.
+    /// Class names file, one per line. Default: classes.txt / *.names in the image or labels folder.
     #[arg(short, long)]
     classes: Option<PathBuf>,
     /// Import a COCO json on startup.

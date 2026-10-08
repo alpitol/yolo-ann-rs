@@ -96,11 +96,16 @@ pub struct App {
     settings: Settings,
 
     image_dir: Option<PathBuf>,
+    /// YOLO labels folder: where Ctrl+S / autosave write label files.
     labels_dir: Option<PathBuf>,
+    /// `labels_dir` was picked automatically (label files next to the images).
+    labels_auto: bool,
     classes_file: Option<PathBuf>,
     images: Vec<String>,
     visible: Vec<usize>,
     search: String,
+    /// Show only images that have annotation data (an entry in `anns`).
+    filter_data: bool,
     cur: Option<usize>,
     classes: Vec<String>,
     cur_class: usize,
@@ -147,10 +152,12 @@ impl App {
             settings,
             image_dir: None,
             labels_dir: None,
+            labels_auto: false,
             classes_file: None,
             images: Vec::new(),
             visible: Vec::new(),
             search: String::new(),
+            filter_data: false,
             cur: None,
             classes: Vec::new(),
             cur_class: 0,
@@ -204,7 +211,7 @@ impl App {
                 && let Some(name) = app.settings.last_image.clone()
                 && let Some(i) = app.images.iter().position(|n| *n == name)
             {
-                app.go_to(i);
+                app.go_to(i, false);
             }
         } else if let Some(c) = &cfg.classes {
             app.load_classes(c);
@@ -234,36 +241,25 @@ impl App {
         Some(self.image_dir.as_ref()?.join(&self.images[idx]))
     }
 
+    /// An image has annotation data once it was imported, restored, edited or visited.
+    /// New entries are unsaved: they don't exist in the labels folder yet.
     fn ensure_ann(&mut self, name: &str) -> &mut ImageAnn {
-        if !self.anns.contains_key(name) {
-            let boxes = match &self.labels_dir {
-                Some(ld) => match model::read_yolo_file(&model::label_path(ld, name)) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        self.status = format!("{e:#}");
-                        Vec::new()
-                    }
-                },
-                None => Vec::new(),
-            };
-            self.anns.insert(name.to_string(), ImageAnn::clean(boxes));
-        }
-        self.anns.get_mut(name).unwrap()
+        self.anns
+            .entry(name.to_string())
+            .or_insert_with(|| ImageAnn {
+                dirty: true,
+                ..Default::default()
+            })
     }
 
-    /// Boxes for exports: in-memory if present, otherwise from disk.
-    fn effective_boxes(&self, name: &str) -> Vec<BBox> {
-        if let Some(a) = self.anns.get(name) {
-            return a.boxes.clone();
-        }
-        self.labels_dir
-            .as_ref()
-            .and_then(|ld| model::read_yolo_file(&model::label_path(ld, name)).ok())
-            .unwrap_or_default()
+    fn data_count(&self) -> usize {
+        self.anns.len()
     }
 
     fn open_dir(&mut self, dir: &Path, labels_dir: Option<PathBuf>, classes_file: Option<PathBuf>) {
         self.leave_folder();
+        let dir = &dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+        let labels_dir = labels_dir.map(|d| d.canonicalize().unwrap_or(d));
         let images = match model::scan_images(dir) {
             Ok(v) => v,
             Err(e) => {
@@ -271,9 +267,9 @@ impl App {
                 return;
             }
         };
-        let labels_dir = labels_dir.unwrap_or_else(|| model::guess_labels_dir(dir));
         self.image_dir = Some(dir.to_path_buf());
-        self.labels_dir = Some(labels_dir.clone());
+        self.labels_dir = None;
+        self.labels_auto = false;
         self.images = images;
         self.anns.clear();
         self.cache.clear();
@@ -289,7 +285,7 @@ impl App {
 
         let classes_file = classes_file
             .filter(|p| p.is_file())
-            .or_else(|| model::find_classes_file(dir, &labels_dir))
+            .or_else(|| model::find_classes_file(dir))
             .or_else(|| self.classes_file.clone());
         if let Some(c) = classes_file {
             self.load_classes(&c);
@@ -301,18 +297,29 @@ impl App {
         self.backup_path = Some(bp);
 
         self.settings.last_image_dir = Some(dir.to_path_buf());
-        self.settings.last_labels_dir = Some(labels_dir.clone());
+        self.settings.last_labels_dir = None;
         self.settings.last_image = None;
         self.settings.save();
 
-        self.set_status(format!(
-            "Opened {} images from {} (labels: {})",
-            self.images.len(),
-            dir.display(),
-            labels_dir.display()
-        ));
+        let mut status = format!("Opened {} images from {}", self.images.len(), dir.display());
+        match labels_dir {
+            Some(ld) => {
+                self.import_yolo(&ld, false);
+                status = format!("{status}; {}", self.status);
+            }
+            None => {
+                if let Ok((found, _)) = model::read_yolo_dir(dir, &self.images)
+                    && !found.is_empty()
+                {
+                    self.import_yolo(dir, true);
+                    status = format!("{status}; autoselected labels: {}", self.status);
+                }
+            }
+        }
+        self.set_status(status);
+        self.compute_visible();
         if !self.images.is_empty() {
-            self.go_to(0);
+            self.go_to(0, false);
         }
     }
 
@@ -321,7 +328,7 @@ impl App {
         if self.image_dir.is_none() {
             return;
         }
-        if self.settings.autosave_labels {
+        if self.settings.autosave_labels && self.labels_dir.is_some() {
             self.save_yolo();
         }
         self.write_backup(true);
@@ -345,23 +352,30 @@ impl App {
         }
     }
 
-    fn go_to(&mut self, idx: usize) {
+    /// `user`: the user moved away from the current image (arrow keys, list click).
+    /// Only then does a never-annotated image become one with (empty) annotation data,
+    /// so programmatic jumps (opening a folder, filtering) don't create data.
+    fn go_to(&mut self, idx: usize, user: bool) {
         if idx >= self.images.len() {
             return;
         }
         if let Some(prev) = self.cur
             && prev != idx
-            && self.settings.autosave_labels
         {
             let name = self.images[prev].clone();
-            self.save_one(&name);
+            if user && !self.anns.contains_key(&name) {
+                self.ensure_ann(&name);
+                self.mark_changed();
+                self.compute_visible();
+            }
+            if self.settings.autosave_labels {
+                self.save_one(&name);
+            }
         }
         self.cur = Some(idx);
         self.selected = None;
         self.drag = Drag::None;
-        let name = self.images[idx].clone();
-        self.ensure_ann(&name);
-        self.settings.last_image = Some(name);
+        self.settings.last_image = Some(self.images[idx].clone());
         self.update_prefetch();
         self.scroll_to_current = true;
         self.write_backup(false);
@@ -380,7 +394,7 @@ impl App {
             Some(p) => (p as isize + delta).rem_euclid(n as isize) as usize,
             None => 0,
         };
-        self.go_to(self.visible[pos]);
+        self.go_to(self.visible[pos], true);
     }
 
     fn cycle_class(&mut self, delta: isize) {
@@ -393,19 +407,26 @@ impl App {
         self.selected = None;
     }
 
-    fn apply_search(&mut self) {
+    /// Recompute the visible list (search + data filter) without moving.
+    fn compute_visible(&mut self) {
         let q = self.search.to_lowercase();
         self.visible = (0..self.images.len())
-            .filter(|&i| q.is_empty() || self.images[i].to_lowercase().contains(&q))
+            .filter(|&i| {
+                let name = &self.images[i];
+                (q.is_empty() || name.to_lowercase().contains(&q))
+                    && (!self.filter_data || self.anns.contains_key(name))
+            })
             .collect();
-        let cur_visible = self
-            .cur
-            .map(|c| self.visible.binary_search(&c).is_ok())
-            .unwrap_or(false);
-        if !cur_visible {
-            if let Some(&first) = self.visible.first() {
-                self.go_to(first);
-            }
+    }
+
+    /// After the search text or the data filter changed: jump to the first
+    /// visible image if the current one got hidden.
+    fn apply_filters(&mut self) {
+        self.compute_visible();
+        if self.visible_pos().is_none()
+            && let Some(&first) = self.visible.first()
+        {
+            self.go_to(first, false);
         } else {
             self.update_prefetch();
         }
@@ -564,7 +585,14 @@ impl App {
         }
     }
 
+    /// Ctrl+S: write changed label files to the labels folder (asks for one if unset).
     fn save_yolo(&mut self) {
+        if self.labels_dir.is_none() {
+            if let Some(d) = self.pick_labels_dir("Folder for YOLO label files") {
+                self.export_yolo(&d);
+            }
+            return;
+        }
         let dirty: Vec<String> = self
             .anns
             .iter()
@@ -593,7 +621,7 @@ impl App {
     /// YOLO label files are useless without the class list; put one next to them.
     fn write_classes_if_missing(&mut self) {
         let Some(ld) = &self.labels_dir else { return };
-        if self.classes.is_empty() || model::find_classes_file(ld, ld).is_some() {
+        if self.classes.is_empty() || model::find_classes_file(ld).is_some() {
             return;
         }
         let p = ld.join("classes.txt");
@@ -607,13 +635,11 @@ impl App {
         if !force && self.backup_last_write.elapsed() < BACKUP_DEBOUNCE / 4 {
             return;
         }
-        let (Some(path), Some(image_dir), Some(labels_dir)) = (
-            self.backup_path.clone(),
-            self.image_dir.clone(),
-            self.labels_dir.clone(),
-        ) else {
+        let (Some(path), Some(image_dir)) = (self.backup_path.clone(), self.image_dir.clone())
+        else {
             return;
         };
+        let labels_dir = self.labels_dir.clone();
         // Don't overwrite a not-yet-restored backup with an empty one.
         let images: std::collections::BTreeMap<String, Vec<BBox>> = self
             .anns
@@ -663,6 +689,8 @@ impl App {
         }
         self.selected = None;
         self.mark_changed();
+        self.compute_visible();
+        self.update_prefetch();
         if !self.status.starts_with("Warning") {
             self.set_status(format!("Restored annotations of {n} images from backup"));
         }
@@ -689,6 +717,8 @@ impl App {
                 }
                 self.selected = None;
                 self.mark_changed();
+                self.compute_visible();
+                self.update_prefetch();
                 let mut s = format!("Imported {nb} boxes for {n} images from {}", path.display());
                 if imp.skipped_unknown_class > 0 {
                     s += &format!(
@@ -705,23 +735,121 @@ impl App {
         }
     }
 
+    /// Exports every image with annotation data (including empty ones).
     fn export_coco(&mut self, path: &Path) {
-        let mut entries = Vec::with_capacity(self.images.len());
-        for name in &self.images {
+        let mut entries = Vec::with_capacity(self.anns.len());
+        for name in self.images.iter().filter(|n| self.anns.contains_key(*n)) {
             let Some([w, h]) = self.image_size(name) else {
                 self.set_status(format!("Could not read size of {name}"));
                 return;
             };
-            entries.push((name.clone(), w, h, self.effective_boxes(name)));
+            entries.push((name.clone(), w, h, self.anns[name].boxes.clone()));
         }
         let json = model::export_coco(&self.classes, &entries);
         match model::write_atomic(path, json.to_string().as_bytes()) {
             Ok(()) => {
                 self.unsaved = false;
-                self.set_status(format!("Exported COCO to {}", path.display()));
+                self.set_status(format!(
+                    "Exported {} images to {}",
+                    self.anns.len(),
+                    path.display()
+                ));
             }
             Err(e) => self.set_status(format!("COCO export failed: {e:#}")),
         }
+    }
+
+    /// Load `<stem>.txt` files from `dir` into memory. The first imported folder
+    /// becomes the labels folder (saved back there); a folder imported on top of
+    /// another one is treated like any other unsaved edit.
+    fn import_yolo(&mut self, dir: &Path, auto: bool) {
+        let (found, errors) = match model::read_yolo_dir(dir, &self.images) {
+            Ok(v) => v,
+            Err(e) => {
+                self.set_status(format!("YOLO import failed: {e:#}"));
+                return;
+            }
+        };
+        let is_target = self.labels_dir.is_none() || self.labels_dir.as_deref() == Some(dir);
+        if is_target {
+            self.labels_dir = Some(dir.to_path_buf());
+            self.labels_auto = auto;
+            self.settings.last_labels_dir = (!auto).then(|| dir.to_path_buf());
+            self.settings.save();
+        }
+        if self.classes.is_empty()
+            && let Some(c) = model::find_classes_file(dir)
+        {
+            self.load_classes(&c);
+        }
+        let n = found.len();
+        let nb: usize = found.values().map(Vec::len).sum();
+        for (name, boxes) in found {
+            match self.anns.get_mut(&name) {
+                Some(ann) => {
+                    ann.snapshot();
+                    ann.boxes = boxes;
+                    ann.dirty = !is_target;
+                }
+                None => {
+                    let mut ann = ImageAnn::clean(boxes);
+                    ann.dirty = !is_target;
+                    self.anns.insert(name, ann);
+                }
+            }
+        }
+        if !is_target && n > 0 {
+            self.mark_changed();
+        }
+        self.selected = None;
+        self.compute_visible();
+        self.update_prefetch();
+        let mut s = format!("Imported {nb} boxes for {n} images from {}", dir.display());
+        if errors > 0 {
+            s += &format!(" ({errors} unreadable files)");
+        }
+        self.set_status(s);
+    }
+
+    /// Write every image with annotation data to `dir`, which becomes the labels folder.
+    fn export_yolo(&mut self, dir: &Path) {
+        let names: Vec<String> = self.anns.keys().cloned().collect();
+        let mut failed = 0;
+        for name in &names {
+            let ann = &self.anns[name];
+            match model::write_atomic(
+                &model::label_path(dir, name),
+                model::format_yolo(&ann.boxes).as_bytes(),
+            ) {
+                Ok(()) => self.anns.get_mut(name).unwrap().dirty = false,
+                Err(e) => {
+                    failed += 1;
+                    self.status = format!("Save failed: {e:#}");
+                }
+            }
+        }
+        self.labels_dir = Some(dir.to_path_buf());
+        self.labels_auto = false;
+        self.settings.last_labels_dir = Some(dir.to_path_buf());
+        self.settings.save();
+        self.backup_gen += 1;
+        if failed == 0 {
+            self.unsaved = false;
+            self.write_classes_if_missing();
+            self.set_status(format!(
+                "Exported {} label files to {}",
+                names.len(),
+                dir.display()
+            ));
+        }
+        self.write_backup(true);
+    }
+
+    fn pick_labels_dir(&self, title: &str) -> Option<PathBuf> {
+        rfd::FileDialog::new()
+            .set_title(title)
+            .set_directory(self.labels_dir.clone().unwrap_or_else(|| self.start_dir()))
+            .pick_folder()
     }
 
     fn start_crop(&mut self, out_dir: PathBuf) {
@@ -731,7 +859,7 @@ impl App {
         let jobs: Vec<(PathBuf, String, Vec<BBox>)> = self
             .images
             .iter()
-            .map(|n| (dir.join(n), n.clone(), self.effective_boxes(n)))
+            .filter_map(|n| Some((dir.join(n), n.clone(), self.anns.get(n)?.boxes.clone())))
             .filter(|(_, _, b)| !b.is_empty())
             .collect();
         let classes = self.classes.clone();
@@ -862,7 +990,9 @@ impl App {
         if (undo || redo)
             && let Some(name) = self.cur_name().map(String::from)
         {
-            let ann = self.ensure_ann(&name);
+            let Some(ann) = self.anns.get_mut(&name) else {
+                return;
+            };
             let changed = if redo { ann.redo() } else { ann.undo() };
             if changed {
                 self.selected = None;
@@ -886,7 +1016,9 @@ impl App {
         let (Some(sel), Some(name)) = (self.selected, self.cur_name().map(String::from)) else {
             return;
         };
-        let ann = self.ensure_ann(&name);
+        let Some(ann) = self.anns.get_mut(&name) else {
+            return;
+        };
         if sel < ann.boxes.len() {
             ann.snapshot();
             ann.boxes.remove(sel);
@@ -919,57 +1051,82 @@ impl App {
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             if ui
-                .button("📂 Open folder…")
+                .button("📂 Open folder")
                 .on_hover_text("Ctrl+O")
                 .clicked()
             {
                 self.dialog_open_dir();
             }
+            ui.separator();
+            ui.label(RichText::new("YOLO").weak());
             if ui
-                .button("Classes…")
+                .button("Import YOLO")
+                .on_hover_text(
+                    "Load .txt label files from a folder. The first imported folder is \
+                     also where Ctrl+S saves.",
+                )
+                .clicked()
+                && self.image_dir.is_some()
+                && let Some(p) = self.pick_labels_dir("Import YOLO labels from folder")
+            {
+                self.import_yolo(&p, false);
+            }
+            if ui
+                .button("Classes")
                 .on_hover_text("Load classes.txt / *.names")
                 .clicked()
                 && let Some(p) = rfd::FileDialog::new()
-                    .set_directory(self.start_dir())
+                    .set_directory(self.labels_dir.clone().unwrap_or_else(|| self.start_dir()))
                     .add_filter("classes", &["txt", "names", "csv"])
                     .pick_file()
             {
                 self.load_classes(&p);
             }
-            if ui
-                .button("Labels dir…")
-                .on_hover_text("Directory of YOLO .txt label files (read and written here)")
-                .clicked()
-                && let Some(p) = rfd::FileDialog::new()
-                    .set_directory(self.start_dir())
-                    .pick_folder()
-                && let Some(dir) = self.image_dir.clone()
-            {
-                let classes = self.classes_file.clone();
-                self.open_dir(&dir, Some(p), classes);
-            }
-            ui.separator();
-            let save_label = if self.unsaved {
-                "💾 Save YOLO*"
+            let export_label = if self.unsaved {
+                "💾 Export YOLO*"
             } else {
-                "💾 Save YOLO"
+                "💾 Export YOLO"
             };
+            ui.menu_button(export_label, |ui| {
+                let update = match &self.labels_dir {
+                    Some(d) => format!("Update {} (Ctrl+S)", d.display()),
+                    None => "Update labels folder (Ctrl+S)".into(),
+                };
+                if ui
+                    .add_enabled(self.labels_dir.is_some(), egui::Button::new(update))
+                    .on_hover_text("Write only the changed label files")
+                    .on_disabled_hover_text("No labels folder yet: import or export one first")
+                    .clicked()
+                {
+                    ui.close();
+                    self.save_yolo();
+                }
+                if ui
+                    .button("Export to another folder")
+                    .on_hover_text(
+                        "Write label files of all images with annotation data to a new or \
+                         existing folder; it becomes the labels folder",
+                    )
+                    .clicked()
+                {
+                    ui.close();
+                    if let Some(d) = self.pick_labels_dir("Export YOLO labels to folder") {
+                        self.export_yolo(&d);
+                    }
+                }
+            });
             if ui
-                .button(save_label)
-                .on_hover_text("Write .txt label files (Ctrl+S)")
-                .clicked()
-            {
-                self.save_yolo();
-            }
-            if ui
-                .checkbox(&mut self.settings.autosave_labels, "Autosave labels")
-                .on_hover_text("Write the label file whenever you leave an image")
+                .checkbox(&mut self.settings.autosave_labels, "Autosave")
+                .on_hover_text(
+                    "Write the label file to the labels folder whenever you leave an image",
+                )
                 .changed()
             {
                 self.settings.save();
             }
             ui.separator();
-            if ui.button("Import COCO…").clicked()
+            ui.label(RichText::new("COCO").weak());
+            if ui.button("Import COCO").clicked()
                 && let Some(p) = rfd::FileDialog::new()
                     .set_directory(
                         self.image_dir
@@ -982,7 +1139,11 @@ impl App {
             {
                 self.import_coco(&p);
             }
-            if ui.button("Export COCO…").clicked() {
+            if ui
+                .button("Export COCO")
+                .on_hover_text("Export all images with annotation data")
+                .clicked()
+            {
                 let default_name = self
                     .image_dir
                     .as_ref()
@@ -1003,9 +1164,10 @@ impl App {
                     self.export_coco(&p);
                 }
             }
+            ui.separator();
             let cropping = self.crop_job.is_some();
             if ui
-                .add_enabled(!cropping, egui::Button::new("Crop & Save…"))
+                .add_enabled(!cropping, egui::Button::new("Crop & Save"))
                 .clicked()
                 && let Some(p) = rfd::FileDialog::new()
                     .set_title("Folder for crops")
@@ -1016,7 +1178,7 @@ impl App {
             }
             ui.separator();
             if ui
-                .button("Restore backup…")
+                .button("Restore backup")
                 .on_hover_text("Re-load the automatic backup of this folder")
                 .clicked()
                 && let Some(bp) = &self.backup_path
@@ -1091,7 +1253,7 @@ impl App {
                     .desired_width(f32::INFINITY),
             );
             if r.changed() {
-                self.apply_search();
+                self.apply_filters();
             }
             if r.lost_focus() || ui.input(|i| i.key_pressed(Key::Escape)) && r.has_focus() {
                 r.surrender_focus();
@@ -1154,8 +1316,19 @@ impl App {
         });
         let id = ui.make_persistent_id("image_list_view");
         ui.data_mut(|d| d.insert_temp(id, (out.state.offset.y, out.inner_rect.height())));
+        let filter_text = format!("Filter to annotation data ({})", self.data_count());
+        if ui
+            .checkbox(&mut self.filter_data, filter_text)
+            .on_hover_text(
+                "Show only images that have annotations (also empty ones) from YOLO/COCO \
+                 import, editing or visiting",
+            )
+            .changed()
+        {
+            self.apply_filters();
+        }
         if let Some(i) = clicked {
-            self.go_to(i);
+            self.go_to(i, true);
             self.scroll_to_current = false;
         }
 
@@ -1178,13 +1351,14 @@ impl App {
                 None => "loading…".into(),
             };
             ui.label(RichText::new(info).strong());
-            if let Some(ld) = &self.labels_dir {
-                ui.label(
-                    RichText::new(format!("labels: {}", ld.display()))
-                        .small()
-                        .weak(),
-                );
-            }
+            let labels = match &self.labels_dir {
+                Some(ld) if self.labels_auto => {
+                    format!("labels: {} (autoselected)", ld.display())
+                }
+                Some(ld) => format!("labels: {}", ld.display()),
+                None => "labels: none (Import YOLO or Export YOLO)".into(),
+            };
+            ui.label(RichText::new(labels).small().weak());
         }
 
         ui.separator();
@@ -1194,7 +1368,7 @@ impl App {
         });
         if self.classes.is_empty() {
             ui.label(
-                RichText::new("No classes loaded — use \"Classes…\"").color(Color32::LIGHT_RED),
+                RichText::new("No classes loaded — use \"Classes\"").color(Color32::LIGHT_RED),
             );
         }
         let class_h = (ui.available_height() * 0.4).max(80.0);
@@ -1241,7 +1415,7 @@ impl App {
                     ("F / Home", "reset zoom"),
                     ("Esc", "deselect / cancel"),
                     ("Ctrl+Z / Ctrl+Y", "undo / redo (per image)"),
-                    ("Ctrl+S", "save YOLO labels"),
+                    ("Ctrl+S", "update YOLO labels folder"),
                     ("Ctrl+O", "open folder"),
                 ] {
                     ui.horizontal(|ui| {
@@ -1443,8 +1617,11 @@ impl App {
             (x * size[0] as f64, y * size[1] as f64)
         });
 
-        self.ensure_ann(&name);
-        let boxes = self.anns[&name].boxes.clone();
+        let boxes = self
+            .anns
+            .get(&name)
+            .map(|a| a.boxes.clone())
+            .unwrap_or_default();
         if self.selected.is_some_and(|s| s >= boxes.len()) {
             self.selected = None;
         }
@@ -1526,15 +1703,22 @@ impl App {
         if resp.drag_stopped_by(PointerButton::Primary) {
             if let Some((idx, b)) = self.drag_preview() {
                 let r = to_screen(&b);
-                let ann = self.anns.get_mut(&name).unwrap();
-                match idx {
-                    None if r.width() >= MIN_BOX_SCREEN_PX && r.height() >= MIN_BOX_SCREEN_PX => {
+                let new_box_ok = r.width() >= MIN_BOX_SCREEN_PX && r.height() >= MIN_BOX_SCREEN_PX;
+                if idx.is_none() && new_box_ok && !self.anns.contains_key(&name) {
+                    self.ensure_ann(&name);
+                    self.compute_visible();
+                }
+                let ann = self.anns.get_mut(&name);
+                match (idx, ann) {
+                    (None, Some(ann)) if new_box_ok => {
                         ann.snapshot();
                         ann.boxes.push(b);
                         self.selected = Some(ann.boxes.len() - 1);
                         self.mark_changed();
                     }
-                    Some(i) if ann.boxes[i] != b && r.width() >= 1.0 && r.height() >= 1.0 => {
+                    (Some(i), Some(ann))
+                        if ann.boxes[i] != b && r.width() >= 1.0 && r.height() >= 1.0 =>
+                    {
                         ann.snapshot();
                         ann.boxes[i] = b;
                         self.mark_changed();
@@ -1563,7 +1747,11 @@ impl App {
         }
 
         // Interactions above may have changed the boxes.
-        let boxes = self.anns[&name].boxes.clone();
+        let boxes = self
+            .anns
+            .get(&name)
+            .map(|a| a.boxes.clone())
+            .unwrap_or_default();
 
         // ---- cursor
         if let Some(p) = resp.hover_pos() {
@@ -1774,7 +1962,7 @@ impl App {
                 );
             }
             ui.horizontal(|ui| {
-                if ui.button("Save YOLO & quit").clicked() {
+                if ui.button("Export YOLO & quit").clicked() {
                     action = 1;
                 }
                 if ui.button("Quit").clicked() {
@@ -1810,7 +1998,7 @@ impl eframe::App for App {
         self.poll_loader(&ctx);
 
         if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close {
-            if self.settings.autosave_labels {
+            if self.settings.autosave_labels && self.labels_dir.is_some() {
                 self.save_yolo();
             }
             self.write_backup(true);
