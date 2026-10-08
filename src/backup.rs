@@ -95,6 +95,9 @@ pub struct Settings {
     pub last_classes_file: Option<PathBuf>,
     pub last_image: Option<String>,
     pub autosave_labels: bool,
+    /// Last folder used in each kind of file dialog ("yolo", "classes", "coco", "crops").
+    #[serde(default)]
+    pub dialog_dirs: std::collections::BTreeMap<String, PathBuf>,
 }
 
 fn settings_path() -> PathBuf {
@@ -124,5 +127,20 @@ pub fn ago(secs: u64) -> String {
         60..=3599 => format!("{} min ago", d / 60),
         3600..=86399 => format!("{} h ago", d / 3600),
         _ => format!("{} days ago", d / 86400),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Settings;
+
+    #[test]
+    fn settings_from_older_version_still_load() {
+        let s: Settings = serde_json::from_str(
+            r#"{"last_image_dir":"/x","last_labels_dir":null,"last_classes_file":null,
+                "last_image":"a.jpg","autosave_labels":true}"#,
+        )
+        .unwrap();
+        assert!(s.autosave_labels && s.dialog_dirs.is_empty());
     }
 }

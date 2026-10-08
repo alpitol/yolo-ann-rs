@@ -909,11 +909,41 @@ impl App {
         self.write_backup(true);
     }
 
-    fn pick_labels_dir(&self, title: &str) -> Option<PathBuf> {
-        rfd::FileDialog::new()
+    fn pick_labels_dir(&mut self, title: &str) -> Option<PathBuf> {
+        let start = self.dialog_dir(
+            "yolo",
+            self.labels_dir.clone().unwrap_or_else(|| self.start_dir()),
+        );
+        let d = rfd::FileDialog::new()
             .set_title(title)
-            .set_directory(self.labels_dir.clone().unwrap_or_else(|| self.start_dir()))
-            .pick_folder()
+            .set_directory(start)
+            .pick_folder()?;
+        self.remember_dir("yolo", &d);
+        Some(d)
+    }
+
+    /// Where a file dialog of `kind` starts: the folder used last time, if it still exists.
+    fn dialog_dir(&self, kind: &str, fallback: PathBuf) -> PathBuf {
+        self.settings
+            .dialog_dirs
+            .get(kind)
+            .filter(|d| d.is_dir())
+            .cloned()
+            .unwrap_or(fallback)
+    }
+
+    fn remember_dir(&mut self, kind: &str, dir: &Path) {
+        self.settings
+            .dialog_dirs
+            .insert(kind.to_string(), dir.to_path_buf());
+        self.settings.save();
+    }
+
+    /// File dialogs remember the folder of the picked file.
+    fn remember_file_dir(&mut self, kind: &str, file: &Path) {
+        if let Some(d) = file.parent() {
+            self.remember_dir(kind, d);
+        }
     }
 
     fn start_crop(&mut self, out_dir: PathBuf) {
@@ -1097,7 +1127,12 @@ impl App {
 
     fn dialog_open_dir(&mut self) {
         let mut d = rfd::FileDialog::new().set_title("Open image folder");
-        if let Some(p) = &self.image_dir {
+        if let Some(p) = self
+            .image_dir
+            .as_ref()
+            .or(self.settings.last_image_dir.as_ref())
+            .filter(|d| d.is_dir())
+        {
             d = d.set_directory(p);
         }
         if let Some(dir) = d.pick_folder() {
@@ -1109,6 +1144,16 @@ impl App {
         self.image_dir
             .clone()
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+    }
+
+    fn coco_dir(&self) -> PathBuf {
+        let fallback = self
+            .image_dir
+            .as_ref()
+            .and_then(|d| d.parent())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| self.start_dir());
+        self.dialog_dir("coco", fallback)
     }
 
     // ------------------------------------------------------------------- UI
@@ -1140,10 +1185,14 @@ impl App {
                 .on_hover_text("Load classes.txt / *.names")
                 .clicked()
                 && let Some(p) = rfd::FileDialog::new()
-                    .set_directory(self.labels_dir.clone().unwrap_or_else(|| self.start_dir()))
+                    .set_directory(self.dialog_dir(
+                        "classes",
+                        self.labels_dir.clone().unwrap_or_else(|| self.start_dir()),
+                    ))
                     .add_filter("classes", &["txt", "names", "csv"])
                     .pick_file()
             {
+                self.remember_file_dir("classes", &p);
                 self.load_classes(&p);
             }
             let export_label = if self.has_unsaved() {
@@ -1191,15 +1240,11 @@ impl App {
             ui.separator();
             if ui.button("📥 Import COCO").clicked()
                 && let Some(p) = rfd::FileDialog::new()
-                    .set_directory(
-                        self.image_dir
-                            .as_ref()
-                            .and_then(|d| d.parent())
-                            .unwrap_or(Path::new(".")),
-                    )
+                    .set_directory(self.coco_dir())
                     .add_filter("COCO json", &["json"])
                     .pick_file()
             {
+                self.remember_file_dir("coco", &p);
                 self.import_coco(&p);
             }
             if ui
@@ -1214,16 +1259,12 @@ impl App {
                     .map(|n| format!("{}_HUMAN_FIXED.json", n.to_string_lossy()))
                     .unwrap_or_else(|| "bboxes_coco.json".into());
                 if let Some(p) = rfd::FileDialog::new()
-                    .set_directory(
-                        self.image_dir
-                            .as_ref()
-                            .and_then(|d| d.parent())
-                            .unwrap_or(Path::new(".")),
-                    )
+                    .set_directory(self.coco_dir())
                     .set_file_name(default_name)
                     .add_filter("COCO json", &["json"])
                     .save_file()
                 {
+                    self.remember_file_dir("coco", &p);
                     self.export_coco(&p);
                 }
             }
@@ -1234,9 +1275,10 @@ impl App {
                 .clicked()
                 && let Some(p) = rfd::FileDialog::new()
                     .set_title("Folder for crops")
-                    .set_directory(self.start_dir())
+                    .set_directory(self.dialog_dir("crops", self.start_dir()))
                     .pick_folder()
             {
+                self.remember_dir("crops", &p);
                 self.start_crop(p);
             }
             ui.separator();

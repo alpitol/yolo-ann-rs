@@ -65,7 +65,7 @@ No label folder layout is assumed: labels come only from what you import (or fro
 - **Automatic backup:** all unsaved annotations are written about 2 s after every change, and on every image switch and on exit, to
   `~/.local/share/yolo-ann/backups/<folder>-<hash>.json` (one file per image folder). The previous session's file is kept as `*.prev.json`.
   When a folder whose backup contains unsaved annotations is opened, a banner offers **Restore / Ignore / Delete backup**. **Restore backup** loads any backup file manually.
-- Settings (last folder and image) are stored in `~/.config/yolo-ann/settings.json`.
+- Settings are stored in `~/.config/yolo-ann/settings.json`: the last image folder and image, and the last folder used by each file dialog. The dialogs remember YOLO labels, YOLO classes, COCO json and crops separately.
 - Closing the window asks whether to save first only if some image's boxes actually differ from what was last imported or exported (YOLO or COCO). Just browsing or importing never triggers it, and undoing an edit clears it. The backup holds exactly those edited images.
 
 ## Tests
