@@ -1169,7 +1169,7 @@ impl App {
             }
             ui.separator();
             if ui
-                .button("📥 Import YOLO")
+                .button("📥 Import YOLO bboxes")
                 .on_hover_text(
                     "Load .txt label files from a folder. The first imported folder is \
                      also where Ctrl+S saves.",
@@ -1181,15 +1181,15 @@ impl App {
                 self.import_yolo(&p, false);
             }
             if ui
-                .button("📥 YOLO classes")
-                .on_hover_text("Load classes.txt / *.names")
+                .button("📥 Import YOLO classes")
+                .on_hover_text("Load classes.txt, *.names or a data.yaml")
                 .clicked()
                 && let Some(p) = rfd::FileDialog::new()
                     .set_directory(self.dialog_dir(
                         "classes",
                         self.labels_dir.clone().unwrap_or_else(|| self.start_dir()),
                     ))
-                    .add_filter("classes", &["txt", "names", "csv"])
+                    .add_filter("classes", &["txt", "names", "yaml", "yml", "csv"])
                     .pick_file()
             {
                 self.remember_file_dir("classes", &p);
@@ -1482,7 +1482,7 @@ impl App {
                     format!("labels: {} (autoselected)", ld.display())
                 }
                 Some(ld) => format!("labels: {}", ld.display()),
-                None => "labels: none (Import YOLO or Export YOLO)".into(),
+                None => "labels: none (Import YOLO bboxes or Export YOLO)".into(),
             };
             ui.label(RichText::new(labels).small().weak());
         }
@@ -1494,7 +1494,8 @@ impl App {
         });
         if self.classes.is_empty() {
             ui.label(
-                RichText::new("No classes loaded — use \"YOLO classes\"").color(Color32::LIGHT_RED),
+                RichText::new("No classes loaded — use \"Import YOLO classes\"")
+                    .color(Color32::LIGHT_RED),
             );
         }
         let class_h = (ui.available_height() * 0.4).max(80.0);

@@ -278,6 +278,10 @@ pub fn write_atomic(path: &Path, data: &[u8]) -> Result<()> {
 pub fn read_classes(path: &Path) -> Result<Vec<String>> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ext.eq_ignore_ascii_case("yaml") || ext.eq_ignore_ascii_case("yml") {
+        return parse_data_yaml(&text).with_context(|| format!("parsing {}", path.display()));
+    }
     Ok(text
         .lines()
         .map(str::trim)
@@ -286,7 +290,51 @@ pub fn read_classes(path: &Path) -> Result<Vec<String>> {
         .collect())
 }
 
-/// Look for a classes file (classes.txt, obj.names, *.names) directly in `dir`.
+/// Class names from an Ultralytics-style `data.yaml`: `names` is either a list
+/// or a `{index: name}` map.
+pub fn parse_data_yaml(text: &str) -> Result<Vec<String>> {
+    use serde_yaml_ng::Value;
+    let doc: Value = serde_yaml_ng::from_str(text)?;
+    let names = doc.get("names").context("no `names` in yaml")?;
+    let classes: Vec<String> = match names {
+        Value::Sequence(seq) => seq.iter().map(yaml_scalar).collect::<Result<_>>()?,
+        Value::Mapping(map) => {
+            let mut by_idx = std::collections::BTreeMap::new();
+            for (k, v) in map {
+                let i = match k {
+                    Value::Number(n) => n.as_u64(),
+                    Value::String(s) => s.trim().parse().ok(),
+                    _ => None,
+                }
+                .with_context(|| format!("class index {k:?} is not a number"))?;
+                by_idx.insert(i as usize, yaml_scalar(v)?);
+            }
+            let n = by_idx.keys().next_back().map_or(0, |&i| i + 1);
+            (0..n)
+                .map(|i| by_idx.remove(&i).unwrap_or_else(|| format!("class{i}")))
+                .collect()
+        }
+        _ => anyhow::bail!("`names` must be a list or a map"),
+    };
+    if let Some(nc) = doc.get("nc").and_then(Value::as_u64)
+        && nc as usize != classes.len()
+    {
+        anyhow::bail!("nc is {nc} but {} names are given", classes.len());
+    }
+    Ok(classes)
+}
+
+fn yaml_scalar(v: &serde_yaml_ng::Value) -> Result<String> {
+    use serde_yaml_ng::Value;
+    Ok(match v {
+        Value::String(s) => s.trim().to_string(),
+        Value::Number(n) => n.to_string(),
+        Value::Bool(b) => b.to_string(),
+        _ => anyhow::bail!("class name {v:?} is not a string"),
+    })
+}
+
+/// Look for a classes file (classes.txt, obj.names, *.names, data.yaml) directly in `dir`.
 pub fn find_classes_file(dir: &Path) -> Option<PathBuf> {
     for name in ["classes.txt", "obj.names", "classes.names"] {
         let p = dir.join(name);
@@ -299,6 +347,12 @@ pub fn find_classes_file(dir: &Path) -> Option<PathBuf> {
         .flatten()
         .map(|e| e.path())
         .find(|p| p.extension().and_then(|e| e.to_str()) == Some("names"))
+        .or_else(|| {
+            ["data.yaml", "dataset.yaml"]
+                .iter()
+                .map(|n| dir.join(n))
+                .find(|p| p.is_file())
+        })
 }
 
 pub struct CocoImport {
@@ -496,5 +550,17 @@ mod tests {
         assert_eq!(got.class, 1);
         assert!((got.x0 - 0.25).abs() < 1e-9 && (got.y1 - 1.0).abs() < 1e-9);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn data_yaml_classes() {
+        let map = "path: /x\ntrain: images\nnc: 3\nnames:\n  0: seamark\n  2: ship\n  1: boat\n";
+        assert_eq!(parse_data_yaml(map).unwrap(), ["seamark", "boat", "ship"]);
+        let flow = "names: ['a', b]\n";
+        assert_eq!(parse_data_yaml(flow).unwrap(), ["a", "b"]);
+        let block = "nc: 2\nnames:\n  - x\n  - y\n";
+        assert_eq!(parse_data_yaml(block).unwrap(), ["x", "y"]);
+        assert!(parse_data_yaml("nc: 3\nnames: [a, b]\n").is_err());
+        assert!(parse_data_yaml("train: images\n").is_err());
     }
 }
