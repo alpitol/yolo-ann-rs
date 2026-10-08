@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 
+/// Class list with explicit label ids, one `<id> <name>` per line.
+pub const METADATA_FILE: &str = "metadata.txt";
+
 pub const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "bmp", "webp"];
 
 /// Bounding box in normalized image coordinates (0..1), corners.
@@ -201,7 +204,11 @@ pub fn label_path(labels_dir: &Path, image_name: &str) -> PathBuf {
 
 /// Reads `<stem>.txt` for every image that has one in `dir`.
 /// Returns image name -> boxes, and the number of unreadable files.
-pub fn read_yolo_dir(dir: &Path, images: &[String]) -> Result<(HashMap<String, Vec<BBox>>, usize)> {
+pub fn read_yolo_dir(
+    dir: &Path,
+    images: &[String],
+    ids: &ClassIds,
+) -> Result<(HashMap<String, Vec<BBox>>, usize)> {
     let present: std::collections::HashSet<std::ffi::OsString> = std::fs::read_dir(dir)
         .with_context(|| format!("reading {}", dir.display()))?
         .flatten()
@@ -216,7 +223,7 @@ pub fn read_yolo_dir(dir: &Path, images: &[String]) -> Result<(HashMap<String, V
         }
         match std::fs::read_to_string(&p) {
             Ok(t) => {
-                out.insert(name.clone(), parse_yolo(&t));
+                out.insert(name.clone(), parse_yolo(&t, ids));
             }
             Err(_) => errors += 1,
         }
@@ -224,11 +231,45 @@ pub fn read_yolo_dir(dir: &Path, images: &[String]) -> Result<(HashMap<String, V
     Ok((out, errors))
 }
 
-pub fn parse_yolo(text: &str) -> Vec<BBox> {
+/// Class ids as written in label files, for class files that give explicit ids
+/// (`<id> <name>` lines, e.g. `metadata.txt`). `ids[i]` is the file id of class
+/// index `i`; empty means the file id is the class index (plain YOLO).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ClassIds(pub Vec<usize>);
+
+impl ClassIds {
+    pub fn is_identity(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// File id -> class index. Ids missing from the class file map past the
+    /// class list (`len + id`), so they survive a save unchanged.
+    pub fn to_index(&self, id: usize) -> usize {
+        if self.is_identity() {
+            return id;
+        }
+        self.0
+            .iter()
+            .position(|&i| i == id)
+            .unwrap_or(self.0.len() + id)
+    }
+
+    pub fn to_id(&self, class: usize) -> usize {
+        match self.0.get(class) {
+            Some(&id) => id,
+            None if self.is_identity() => class,
+            None => class.saturating_sub(self.0.len()),
+        }
+    }
+}
+
+pub fn parse_yolo(text: &str, ids: &ClassIds) -> Vec<BBox> {
     text.lines()
         .filter_map(|line| {
             let mut it = line.split_whitespace();
-            let class: usize = it.next()?.parse::<f64>().ok().map(|c| c as usize)?;
+            let id: usize = it.next()?.parse::<f64>().ok().map(|c| c as usize)?;
+            let class = ids.to_index(id);
             let v: Vec<f64> = it.take(4).filter_map(|s| s.parse().ok()).collect();
             if v.len() != 4 {
                 return None;
@@ -245,13 +286,13 @@ pub fn parse_yolo(text: &str) -> Vec<BBox> {
         .collect()
 }
 
-pub fn format_yolo(boxes: &[BBox]) -> String {
+pub fn format_yolo(boxes: &[BBox], ids: &ClassIds) -> String {
     let mut s = String::new();
     for b in boxes {
         let b = b.normalized();
         s.push_str(&format!(
             "{} {:.6} {:.6} {:.6} {:.6}\n",
-            b.class,
+            ids.to_id(b.class),
             (b.x0 + b.x1) / 2.0,
             (b.y0 + b.y1) / 2.0,
             b.x1 - b.x0,
@@ -275,19 +316,61 @@ pub fn write_atomic(path: &Path, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
-pub fn read_classes(path: &Path) -> Result<Vec<String>> {
+/// Class names and their label file ids. Formats: one name per line, `<id> <name>`
+/// per line (e.g. `metadata.txt`), or a `data.yaml`.
+pub fn read_classes(path: &Path) -> Result<(Vec<String>, ClassIds)> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     if ext.eq_ignore_ascii_case("yaml") || ext.eq_ignore_ascii_case("yml") {
-        return parse_data_yaml(&text).with_context(|| format!("parsing {}", path.display()));
+        let names =
+            parse_data_yaml(&text).with_context(|| format!("parsing {}", path.display()))?;
+        return Ok((names, ClassIds::default()));
     }
-    Ok(text
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .map(String::from)
-        .collect())
+    if let Some(v) = parse_id_names(&text) {
+        return Ok(v);
+    }
+    Ok((
+        text.lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(String::from)
+            .collect(),
+        ClassIds::default(),
+    ))
+}
+
+/// `<id> <name>` on every non-empty line, with distinct ids. `None` if the text
+/// is not in that format. Ids `0, 1, 2, ...` in order give an identity mapping.
+pub fn parse_id_names(text: &str) -> Option<(Vec<String>, ClassIds)> {
+    let mut names = Vec::new();
+    let mut ids = Vec::new();
+    for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let (id, name) = line.split_once(char::is_whitespace)?;
+        let id: usize = id.parse().ok()?;
+        let name = name.trim();
+        if name.is_empty() || ids.contains(&id) {
+            return None;
+        }
+        ids.push(id);
+        names.push(name.to_string());
+    }
+    if names.is_empty() {
+        return None;
+    }
+    if ids.iter().enumerate().all(|(i, &id)| i == id) {
+        ids.clear();
+    }
+    Some((names, ClassIds(ids)))
+}
+
+/// Inverse of [`parse_id_names`].
+pub fn format_id_names(names: &[String], ids: &ClassIds) -> String {
+    names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| format!("{} {n}\n", ids.to_id(i)))
+        .collect()
 }
 
 /// Class names from an Ultralytics-style `data.yaml`: `names` is either a list
@@ -334,13 +417,29 @@ fn yaml_scalar(v: &serde_yaml_ng::Value) -> Result<String> {
     })
 }
 
-/// Look for a classes file (classes.txt, obj.names, *.names, data.yaml) directly in `dir`.
+/// Look for a classes file (classes.txt, obj.names, metadata.txt, *.names, data.yaml)
+/// in `dir`, or in its parent if `dir` is an `images` or `labels` folder.
 pub fn find_classes_file(dir: &Path) -> Option<PathBuf> {
+    find_classes_file_in(dir).or_else(|| {
+        let name = dir.file_name()?.to_str()?;
+        if name == "images" || name == "labels" {
+            find_classes_file_in(dir.parent()?)
+        } else {
+            None
+        }
+    })
+}
+
+fn find_classes_file_in(dir: &Path) -> Option<PathBuf> {
     for name in ["classes.txt", "obj.names", "classes.names"] {
         let p = dir.join(name);
         if p.is_file() {
             return Some(p);
         }
+    }
+    let meta = dir.join(METADATA_FILE);
+    if std::fs::read_to_string(&meta).is_ok_and(|t| parse_id_names(&t).is_some()) {
+        return Some(meta);
     }
     std::fs::read_dir(dir)
         .ok()?
@@ -510,7 +609,8 @@ mod tests {
             x1: 0.5,
             y1: 0.6,
         }];
-        let back = parse_yolo(&format_yolo(&b));
+        let ids = ClassIds::default();
+        let back = parse_yolo(&format_yolo(&b, &ids), &ids);
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].class, 2);
         assert!((back[0].x0 - 0.1).abs() < 1e-6 && (back[0].y1 - 0.6).abs() < 1e-6);
@@ -518,7 +618,10 @@ mod tests {
 
     #[test]
     fn yolo_ignores_garbage_and_extra_columns() {
-        let v = parse_yolo("0 0.5 0.5 0.2 0.2 0.93\n\nfoo\n1 0.1 0.1\n");
+        let v = parse_yolo(
+            "0 0.5 0.5 0.2 0.2 0.93\n\nfoo\n1 0.1 0.1\n",
+            &ClassIds::default(),
+        );
         assert_eq!(v.len(), 1);
     }
 
@@ -550,6 +653,57 @@ mod tests {
         assert_eq!(got.class, 1);
         assert!((got.x0 - 0.25).abs() < 1e-9 && (got.y1 - 1.0).abs() < 1e-9);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn id_name_classes() {
+        let meta = "1 motor_boat\n2 sailing_boat\n3 ship\n\n5 floating object\n";
+        let (names, ids) = parse_id_names(meta).unwrap();
+        assert_eq!(
+            names,
+            ["motor_boat", "sailing_boat", "ship", "floating object"]
+        );
+        assert_eq!(ids.0, [1, 2, 3, 5]);
+        assert_eq!(format_id_names(&names, &ids), meta.replace("\n\n", "\n"));
+
+        let boxes = parse_yolo(
+            "1 0.5 0.5 0.2 0.2\n5 0.5 0.5 0.2 0.2\n7 0.5 0.5 0.2 0.2\n",
+            &ids,
+        );
+        assert_eq!(
+            boxes.iter().map(|b| b.class).collect::<Vec<_>>(),
+            [0, 3, 11]
+        );
+        let back = format_yolo(&boxes, &ids);
+        let back_ids: Vec<_> = back.lines().map(|l| l.split(' ').next().unwrap()).collect();
+        assert_eq!(
+            back_ids,
+            ["1", "5", "7"],
+            "unknown ids survive a round trip"
+        );
+
+        assert!(parse_id_names("0 a\n1 b\n").unwrap().1.is_identity());
+        assert!(parse_id_names("ship\nboat\n").is_none());
+        assert!(parse_id_names("1 a\n1 b\n").is_none(), "duplicate ids");
+        assert!(parse_id_names("1\n").is_none());
+        assert!(parse_id_names("").is_none());
+    }
+
+    #[test]
+    fn finds_metadata_in_dataset_root() {
+        let root = std::env::temp_dir().join(format!("yolo_ann_meta_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("images")).unwrap();
+        std::fs::create_dir_all(root.join("other")).unwrap();
+        std::fs::write(root.join("metadata.txt"), "1 boat\n").unwrap();
+        assert_eq!(
+            find_classes_file(&root.join("images")),
+            Some(root.join("metadata.txt"))
+        );
+        assert_eq!(find_classes_file(&root.join("other")), None);
+        std::fs::write(root.join("other/metadata.txt"), "not classes\n").unwrap();
+        assert_eq!(find_classes_file(&root.join("other")), None);
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

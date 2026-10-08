@@ -110,6 +110,8 @@ pub struct App {
     /// The current image was untracked: leaving it must not re-create empty data.
     cur_untracked: bool,
     classes: Vec<String>,
+    /// Label file id of each class (from a `metadata.txt`-style class file).
+    class_ids: model::ClassIds,
     cur_class: usize,
     anns: HashMap<String, ImageAnn>,
     selected: Option<usize>,
@@ -161,6 +163,7 @@ impl App {
             cur: None,
             cur_untracked: false,
             classes: Vec::new(),
+            class_ids: model::ClassIds::default(),
             cur_class: 0,
             anns: HashMap::new(),
             selected: None,
@@ -315,7 +318,7 @@ impl App {
                 status = format!("{status}; {}", self.status);
             }
             None => {
-                if let Ok((found, _)) = model::read_yolo_dir(dir, &self.images)
+                if let Ok((found, _)) = model::read_yolo_dir(dir, &self.images, &self.class_ids)
                     && !found.is_empty()
                 {
                     self.import_yolo(dir, true);
@@ -343,13 +346,14 @@ impl App {
 
     fn load_classes(&mut self, path: &Path) {
         match model::read_classes(path) {
-            Ok(c) => {
+            Ok((c, ids)) => {
                 self.set_status(format!(
                     "Loaded {} classes from {}",
                     c.len(),
                     path.display()
                 ));
                 self.classes = c;
+                self.class_ids = ids;
                 self.cur_class = 0;
                 self.classes_file = Some(path.to_path_buf());
                 self.settings.last_classes_file = Some(path.to_path_buf());
@@ -626,7 +630,7 @@ impl App {
         }
         match model::write_atomic(
             &model::label_path(&ld, name),
-            model::format_yolo(&ann.boxes).as_bytes(),
+            model::format_yolo(&ann.boxes, &self.class_ids).as_bytes(),
         ) {
             Ok(()) => {
                 ann.dirty = false;
@@ -682,8 +686,15 @@ impl App {
         if self.classes.is_empty() || model::find_classes_file(ld).is_some() {
             return;
         }
-        let p = ld.join("classes.txt");
-        let _ = model::write_atomic(&p, (self.classes.join("\n") + "\n").as_bytes());
+        let (p, text) = if self.class_ids.is_identity() {
+            (ld.join("classes.txt"), self.classes.join("\n") + "\n")
+        } else {
+            (
+                ld.join(model::METADATA_FILE),
+                model::format_id_names(&self.classes, &self.class_ids),
+            )
+        };
+        let _ = model::write_atomic(&p, text.as_bytes());
     }
 
     fn write_backup(&mut self, force: bool) {
@@ -712,6 +723,7 @@ impl App {
             image_dir,
             labels_dir,
             classes: self.classes.clone(),
+            class_ids: self.class_ids.clone(),
             saved_at: backup::now_secs(),
             images,
         };
@@ -729,6 +741,7 @@ impl App {
     fn restore_backup(&mut self, b: Backup) {
         if self.classes.is_empty() {
             self.classes = b.classes.clone();
+            self.class_ids = b.class_ids.clone();
         } else if self.classes != b.classes {
             self.set_status(
                 "Warning: backup class list differs from loaded classes; class indices kept as-is",
@@ -764,6 +777,7 @@ impl App {
             Ok(imp) => {
                 if self.classes.is_empty() {
                     self.classes = imp.categories.clone();
+                    self.class_ids = model::ClassIds::default();
                     self.cur_class = 0;
                 }
                 let n = imp.images.len();
@@ -823,7 +837,13 @@ impl App {
     /// becomes the labels folder (saved back there); a folder imported on top of
     /// another one is treated like any other unsaved edit.
     fn import_yolo(&mut self, dir: &Path, auto: bool) {
-        let (found, errors) = match model::read_yolo_dir(dir, &self.images) {
+        // Classes first: their ids decide how the label files are read.
+        if self.classes.is_empty()
+            && let Some(c) = model::find_classes_file(dir)
+        {
+            self.load_classes(&c);
+        }
+        let (found, errors) = match model::read_yolo_dir(dir, &self.images, &self.class_ids) {
             Ok(v) => v,
             Err(e) => {
                 self.set_status(format!("YOLO import failed: {e:#}"));
@@ -836,11 +856,6 @@ impl App {
             self.labels_auto = auto;
             self.settings.last_labels_dir = (!auto).then(|| dir.to_path_buf());
             self.settings.save();
-        }
-        if self.classes.is_empty()
-            && let Some(c) = model::find_classes_file(dir)
-        {
-            self.load_classes(&c);
         }
         let n = found.len();
         let nb: usize = found.values().map(Vec::len).sum();
@@ -880,7 +895,7 @@ impl App {
             let ann = &self.anns[name];
             match model::write_atomic(
                 &model::label_path(dir, name),
-                model::format_yolo(&ann.boxes).as_bytes(),
+                model::format_yolo(&ann.boxes, &self.class_ids).as_bytes(),
             ) {
                 Ok(()) => {
                     let a = self.anns.get_mut(name).unwrap();
@@ -1182,7 +1197,9 @@ impl App {
             }
             if ui
                 .button("📥 Import YOLO classes")
-                .on_hover_text("Load classes.txt, *.names or a data.yaml")
+                .on_hover_text(
+                    "Load classes.txt, *.names, metadata.txt (<id> <name>) or a data.yaml",
+                )
                 .clicked()
                 && let Some(p) = rfd::FileDialog::new()
                     .set_directory(self.dialog_dir(

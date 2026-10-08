@@ -14,6 +14,8 @@ pub struct Backup {
     #[serde(default)]
     pub labels_dir: Option<PathBuf>,
     pub classes: Vec<String>,
+    #[serde(default)]
+    pub class_ids: crate::model::ClassIds,
     /// Unix seconds.
     pub saved_at: u64,
     /// Image file name -> boxes, for every image with unsaved changes.

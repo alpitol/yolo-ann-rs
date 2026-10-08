@@ -17,7 +17,7 @@ struct Args {
     /// Default: the image folder, if it contains label files.
     #[arg(short, long)]
     labels: Option<PathBuf>,
-    /// Class names file: one per line, or a data.yaml. Default: classes.txt / *.names / data.yaml in the image or labels folder.
+    /// Class names file: one per line, `<id> <name>` per line (metadata.txt), or a data.yaml. Default: classes.txt / metadata.txt / *.names / data.yaml in the image or labels folder (or their parent, if named images/labels).
     #[arg(short, long)]
     classes: Option<PathBuf>,
     /// Import a COCO json on startup.

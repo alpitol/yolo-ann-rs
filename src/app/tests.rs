@@ -244,7 +244,7 @@ fn draw_select_move_delete_undo_save() {
     h.step();
     assert!(!h.state().has_unsaved());
     let text = std::fs::read_to_string(dir.join("img1.txt")).unwrap();
-    let parsed = crate::model::parse_yolo(&text);
+    let parsed = crate::model::parse_yolo(&text, &Default::default());
     assert_eq!(parsed.len(), 1);
     assert!((parsed[0].x1 - 0.9).abs() < 0.01);
     // Untouched images aren't rewritten.
@@ -449,6 +449,58 @@ fn yolo_import_and_export_modes() {
         ["classes.txt", "img1.txt", "img10.txt", "img3.txt"]
     );
     assert_eq!(h.state().labels_dir.as_deref(), Some(out.as_path()));
+}
+
+/// `root/{images,labels,metadata.txt}` with 1-based class ids in the label files.
+#[test]
+fn metadata_class_ids_roundtrip() {
+    let root = temp_root("metadata");
+    let dir = make_dataset(&root);
+    std::fs::remove_file(dir.join("classes.txt")).unwrap();
+    std::fs::remove_file(dir.join("img2.txt")).unwrap();
+    std::fs::write(
+        root.join("metadata.txt"),
+        "1 motor_boat\n2 sailing_boat\n3 ship\n",
+    )
+    .unwrap();
+    let labels = root.join("labels");
+    std::fs::create_dir_all(&labels).unwrap();
+    std::fs::write(
+        labels.join("img1.txt"),
+        "3 0.5 0.5 0.2 0.2\n1 0.2 0.2 0.1 0.1\n",
+    )
+    .unwrap();
+
+    let mut h = harness(&dir);
+    wait_loaded(&mut h);
+    assert_eq!(h.state().classes, ["motor_boat", "sailing_boat", "ship"]);
+    h.state_mut().import_yolo(&labels, false);
+    h.step();
+    let classes: Vec<_> = h.state().anns["img1.png"]
+        .boxes
+        .iter()
+        .map(|b| b.class)
+        .collect();
+    assert_eq!(classes, [2, 0], "file ids 3 and 1 are ship and motor_boat");
+
+    h.state_mut().anns.get_mut("img1.png").unwrap().boxes[0].class = 1;
+    h.state_mut().anns.get_mut("img1.png").unwrap().dirty = true;
+    h.state_mut().save_yolo();
+    let text = std::fs::read_to_string(labels.join("img1.txt")).unwrap();
+    let ids: Vec<_> = text.lines().map(|l| l.split(' ').next().unwrap()).collect();
+    assert_eq!(ids, ["2", "1"], "saved with metadata ids");
+    assert!(
+        !labels.join("classes.txt").exists(),
+        "metadata.txt already covers it"
+    );
+
+    let out = root.join("export");
+    h.state_mut().export_yolo(&out);
+    assert_eq!(
+        std::fs::read_to_string(out.join("metadata.txt")).unwrap(),
+        "1 motor_boat\n2 sailing_boat\n3 ship\n"
+    );
+    assert!(!out.join("classes.txt").exists());
 }
 
 fn untrack_via_menu(h: &mut Harness<'static, App>, name: &str) -> bool {
