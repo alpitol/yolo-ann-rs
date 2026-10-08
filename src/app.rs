@@ -1072,7 +1072,7 @@ impl App {
             }
             ui.separator();
             if ui
-                .button("Import YOLO")
+                .button("📥 Import YOLO")
                 .on_hover_text(
                     "Load .txt label files from a folder. The first imported folder is \
                      also where Ctrl+S saves.",
@@ -1084,7 +1084,7 @@ impl App {
                 self.import_yolo(&p, false);
             }
             if ui
-                .button("YOLO classes")
+                .button("📥 YOLO classes")
                 .on_hover_text("Load classes.txt / *.names")
                 .clicked()
                 && let Some(p) = rfd::FileDialog::new()
@@ -1137,7 +1137,7 @@ impl App {
                 self.settings.save();
             }
             ui.separator();
-            if ui.button("Import COCO").clicked()
+            if ui.button("📥 Import COCO").clicked()
                 && let Some(p) = rfd::FileDialog::new()
                     .set_directory(
                         self.image_dir
@@ -1151,7 +1151,7 @@ impl App {
                 self.import_coco(&p);
             }
             if ui
-                .button("Export COCO")
+                .button("💾 Export COCO")
                 .on_hover_text("Export all images with annotation data")
                 .clicked()
             {
