@@ -4,10 +4,17 @@ A local Rust/egui rewrite of the web tool <https://lddl.github.io/yolo-ann/> for
 
 <img src="screenshot.png" alt="screenshot">
 
-- Images are read lazily from disk. Only the current image and its neighbours are decoded, so folders with thousands of images open instantly.
-- The next 6 and previous 2 images are decoded in background threads, so switching images is instant. A 4K jpg takes about 60 ms per thread.
+Main features
+* YOLO and COCO import/export
+* Simple and fast, with hotkeys
+* Handles large amount of images (unlike the web tool)
+
+- Images are read lazily from disk, thus folders with thousands of images open instantly.
+- The next 6 and previous 2 images are decoded in background threads, so switching images is instant.
 - Annotations are backed up to a local file automatically, so nothing is lost on a crash, kill or power-off.
-- YOLO txt labels are read and written directly. COCO json import and export is supported (the export has the same format as the original tool). VOC is not supported.
+- YOLO txt labels are read and written directly. COCO json import and export is supported (the export has the same format as the original tool).
+
+This application is fully vibe-coded with claude opus 5.5.
 
 ## Download
 
