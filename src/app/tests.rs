@@ -474,8 +474,12 @@ fn metadata_class_ids_roundtrip() {
     let mut h = harness(&dir);
     wait_loaded(&mut h);
     assert_eq!(h.state().classes, ["motor_boat", "sailing_boat", "ship"]);
-    h.state_mut().import_yolo(&labels, false);
-    h.step();
+    assert_eq!(
+        h.state().labels_dir.as_deref(),
+        Some(labels.canonicalize().unwrap().as_path()),
+        "sibling labels folder autoselected"
+    );
+    assert!(h.state().labels_auto);
     let classes: Vec<_> = h.state().anns["img1.png"]
         .boxes
         .iter()

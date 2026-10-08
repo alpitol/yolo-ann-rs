@@ -14,7 +14,7 @@ struct Args {
     /// Folder of images to annotate (defaults to the last opened folder).
     image_dir: Option<PathBuf>,
     /// Import YOLO .txt labels from this folder; they are also saved back here.
-    /// Default: the image folder, if it contains label files.
+    /// Default: the image folder, if it contains label files, else the sibling labels folder (ds/images/x -> ds/labels/x).
     #[arg(short, long)]
     labels: Option<PathBuf>,
     /// Class names file: one per line, `<id> <name>` per line (metadata.txt), or a data.yaml. Default: classes.txt / metadata.txt / *.names / data.yaml in the image or labels folder (or their parent, if named images/labels).

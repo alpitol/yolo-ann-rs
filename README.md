@@ -20,7 +20,7 @@ cargo build --release
 
 | Option | Meaning |
 |---|---|
-| `-l, --labels DIR` | Import YOLO labels from this folder (also the save target). Default: the image folder, if it contains label files (shown as *autoselected*) |
+| `-l, --labels DIR` | Import YOLO labels from this folder (also the save target). Default: the image folder, if it contains label files, else the YOLO layout's `labels` folder: the image folder path with its last `images` component replaced by `labels` (`ds/images/train` → `ds/labels/train`), if it exists. Shown as *autoselected* |
 | `-c, --classes FILE` | Class names: one per line, `<id> <name>` per line (a `metadata.txt`, see below), or an Ultralytics `data.yaml` (`names` as a list or an `{index: name}` map). Auto-detected: `classes.txt`, `obj.names`, `metadata.txt`, `*.names`, `data.yaml`, `dataset.yaml` in the image folder or the imported labels folder, or in their parent if the folder is named `images` or `labels`. The last used file is remembered |
 | `--coco FILE` | Import a COCO json on startup. Categories are matched to classes by name. If no classes are loaded, the COCO categories are used |
 | `--ahead N` / `--behind N` | Prefetch window (default 6 / 2) |
@@ -50,7 +50,7 @@ In the image list, `*N` marks an image whose boxes were edited since the last im
 
 ## Saving & backup
 
-No label folder layout is assumed: labels come only from what you import (or from `.txt` files next to the images).
+Labels come only from what you import, from `.txt` files next to the images, or from the YOLO layout's sibling `labels` folder (see `--labels`).
 
 **Annotation data.** An image has annotation data, possibly an empty box list, if it was imported from YOLO or COCO, restored from a backup, edited, or left with the arrow keys or a list click after being shown. Opening a folder or jumping because of a filter does not count. Exports include exactly these images. **Filter to annotation data**, below the image list, shows only them, which is useful for inspecting and editing a subset inside a folder that holds the whole dataset. If you visited an image by accident, right-click it in the list and choose **Untrack empty image**. This removes its empty data and deletes its label file if that file is empty. The option is available only for images that have no boxes and have not had boxes removed since the last import or export.
 

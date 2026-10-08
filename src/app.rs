@@ -318,10 +318,15 @@ impl App {
                 status = format!("{status}; {}", self.status);
             }
             None => {
-                if let Ok((found, _)) = model::read_yolo_dir(dir, &self.images, &self.class_ids)
-                    && !found.is_empty()
-                {
-                    self.import_yolo(dir, true);
+                let next_to_images = model::read_yolo_dir(dir, &self.images, &self.class_ids)
+                    .is_ok_and(|(found, _)| !found.is_empty());
+                let auto = if next_to_images {
+                    Some(dir.to_path_buf())
+                } else {
+                    model::sibling_labels_dir(dir)
+                };
+                if let Some(ld) = auto {
+                    self.import_yolo(&ld, true);
                     status = format!("{status}; autoselected labels: {}", self.status);
                 }
             }

@@ -202,6 +202,25 @@ pub fn label_path(labels_dir: &Path, image_name: &str) -> PathBuf {
     p
 }
 
+/// The YOLO (Ultralytics) layout: the labels of `ds/images/train` live in
+/// `ds/labels/train` (last `images` component replaced by `labels`), if it exists.
+pub fn sibling_labels_dir(images_dir: &Path) -> Option<PathBuf> {
+    let comps: Vec<_> = images_dir.components().map(|c| c.as_os_str()).collect();
+    let i = comps.iter().rposition(|c| *c == "images")?;
+    let p: PathBuf = comps
+        .iter()
+        .enumerate()
+        .map(|(j, c)| {
+            if j == i {
+                std::ffi::OsStr::new("labels")
+            } else {
+                c
+            }
+        })
+        .collect();
+    p.is_dir().then_some(p)
+}
+
 /// Reads `<stem>.txt` for every image that has one in `dir`.
 /// Returns image name -> boxes, and the number of unreadable files.
 pub fn read_yolo_dir(
@@ -703,6 +722,21 @@ mod tests {
         assert_eq!(find_classes_file(&root.join("other")), None);
         std::fs::write(root.join("other/metadata.txt"), "not classes\n").unwrap();
         assert_eq!(find_classes_file(&root.join("other")), None);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn sibling_labels() {
+        let root = std::env::temp_dir().join(format!("yolo_ann_sib_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for d in ["images/train", "labels/train", "images/val", "imgs"] {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+        }
+        let sib = |d: &str| sibling_labels_dir(&root.join(d));
+        assert_eq!(sib("images/train"), Some(root.join("labels/train")));
+        assert_eq!(sib("images"), Some(root.join("labels")));
+        assert_eq!(sib("images/val"), None, "labels/val does not exist");
+        assert_eq!(sib("imgs"), None);
         std::fs::remove_dir_all(&root).ok();
     }
 
