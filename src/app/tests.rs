@@ -517,3 +517,30 @@ fn untrack_empty_image() {
     assert_eq!(cur_name(&h), "img2.png");
     assert!(!h.state().has_unsaved());
 }
+
+#[test]
+fn wheel_zoom_is_instant() {
+    let dir = make_dataset(&temp_root("zoom"));
+    let mut h = harness(&dir);
+    wait_loaded(&mut h);
+    let p = norm_to_screen(&h, 0.5, 0.5);
+    h.hover_at(p);
+    h.step();
+    let z0 = h.state().zoom;
+    h.event(Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: egui::vec2(0.0, 1.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: Modifiers::NONE,
+    });
+    h.step();
+    let z1 = h.state().zoom;
+    assert!(
+        (z1 / z0 - 1.002f32.powf(40.0 * 6.0)).abs() < 1e-3,
+        "{z0} -> {z1}"
+    );
+    for _ in 0..5 {
+        h.step();
+    }
+    assert_eq!(h.state().zoom, z1, "no trailing animation");
+}

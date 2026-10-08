@@ -1647,12 +1647,27 @@ impl App {
 
         // Zoom around the cursor.
         if let Some(p) = resp.hover_pos() {
-            let (scroll, zd) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
-            let factor = if zd != 1.0 {
-                zd
-            } else {
-                1.002f32.powf(scroll * 6.0)
-            };
+            // Raw wheel/pinch events instead of egui's smoothed deltas: zoom is instant.
+            let line = ui.ctx().options(|o| o.input_options.line_scroll_speed);
+            let factor = ui.input(|i| {
+                let mut f = 1.0f32;
+                for e in &i.events {
+                    match e {
+                        egui::Event::MouseWheel { unit, delta, .. } => {
+                            let d = delta.x + delta.y;
+                            let points = match unit {
+                                egui::MouseWheelUnit::Point => d,
+                                egui::MouseWheelUnit::Line => d * line,
+                                egui::MouseWheelUnit::Page => d * rect.height(),
+                            };
+                            f *= 1.002f32.powf(points * 6.0);
+                        }
+                        egui::Event::Zoom(z) => f *= z,
+                        _ => {}
+                    }
+                }
+                f
+            });
             if factor != 1.0 {
                 let s = fit * self.zoom;
                 let min = rect.center() + self.pan - img_px * s / 2.0;
