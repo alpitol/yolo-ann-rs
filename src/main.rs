@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod app;
 mod backup;
 mod loader;
@@ -49,7 +51,20 @@ fn icon() -> egui::IconData {
     }
 }
 
+/// Release builds use the GUI subsystem on Windows (no console window on double-click),
+/// so reuse the terminal we were started from, if any, for `--help` and errors.
+#[cfg(windows)]
+fn attach_parent_console() {
+    unsafe extern "system" {
+        fn AttachConsole(process_id: u32) -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+}
+
 fn main() -> eframe::Result {
+    #[cfg(windows)]
+    attach_parent_console();
     let args = Args::parse();
     let workers = args.workers.unwrap_or_else(|| {
         let n = std::thread::available_parallelism()
