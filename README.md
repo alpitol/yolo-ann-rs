@@ -1,21 +1,26 @@
-# yolo-ann (local)
-
-<img src="logo.png" width="96" alt="logo">
+# yolo-ann-rs <img src="logo.png" width="48" alt="logo">
 
 A local Rust/egui rewrite of the web tool <https://lddl.github.io/yolo-ann/> for drawing YOLO bounding boxes.
+
+<img src="screenshot.png" alt="screenshot">
 
 - Images are read lazily from disk. Only the current image and its neighbours are decoded, so folders with thousands of images open instantly.
 - The next 6 and previous 2 images are decoded in background threads, so switching images is instant. A 4K jpg takes about 60 ms per thread.
 - Annotations are backed up to a local file automatically, so nothing is lost on a crash, kill or power-off.
 - YOLO txt labels are read and written directly. COCO json import and export is supported (the export has the same format as the original tool). VOC is not supported.
 
+## Download
+
+Prebuilt binaries for Linux (x86_64, aarch64), macOS (Apple Silicon, Intel) and Windows (x86_64) are on the [Releases](https://github.com/alpitol/yolo-ann-rs/releases) page. Unpack the archive and run `yolo-ann` (`yolo-ann.exe` on Windows).
+
+- **Linux**: needs glibc 2.35 or newer (Ubuntu 22.04+) and an X11 or Wayland desktop with OpenGL.
+- **macOS**: the binary is not signed, so remove the quarantine flag once before running: `xattr -d com.apple.quarantine yolo-ann`.
+
 ## Build & run
 
+To build and run the program
 ```sh
-cargo build --release
-./target/release/yolo-ann path/to/images            # or no argument: reopen the last folder
-./target/release/yolo-ann real4/images --coco real4/annotations.json
-./target/release/yolo-ann --help
+cargo run --release
 ```
 
 | Option | Meaning |
