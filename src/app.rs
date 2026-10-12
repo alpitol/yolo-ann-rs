@@ -132,6 +132,8 @@ pub struct App {
     hover_px: Option<(f64, f64)>,
 
     status: String,
+    /// Show `status` as a bold red warning.
+    status_warn: bool,
     scroll_to_current: bool,
     title: String,
 
@@ -185,6 +187,7 @@ impl App {
             drag: Drag::None,
             hover_px: None,
             status: String::new(),
+            status_warn: false,
             scroll_to_current: false,
             title: String::new(),
             backup_path: None,
@@ -241,6 +244,12 @@ impl App {
 
     fn set_status(&mut self, s: impl Into<String>) {
         self.status = s.into();
+        self.status_warn = false;
+    }
+
+    fn set_warning(&mut self, s: impl Into<String>) {
+        self.set_status(s);
+        self.status_warn = true;
     }
 
     fn mark_changed(&mut self) {
@@ -328,11 +337,11 @@ impl App {
         self.settings.last_image = None;
         self.settings.save();
 
-        let mut status = format!("Opened {} images from {}", self.images.len(), dir.display());
+        let mut status = String::new();
         match labels_dir {
             Some(ld) => {
                 self.import_yolo(&ld, false);
-                status = format!("{status}; {}", self.status);
+                status = std::mem::take(&mut self.status);
             }
             None => {
                 let next_to_images = model::read_yolo_dir(dir, &self.images, &self.class_ids)
@@ -344,7 +353,7 @@ impl App {
                 };
                 if let Some(ld) = auto {
                     self.import_yolo(&ld, true);
-                    status = format!("{status}; autoselected labels: {}", self.status);
+                    status = format!("Autoselected labels: {}", self.status);
                 }
             }
         }
@@ -717,7 +726,7 @@ impl App {
                 true
             }
             Err(e) => {
-                self.status = format!("Save failed: {e:#}");
+                self.set_status(format!("Save failed: {e:#}"));
                 false
             }
         }
@@ -812,7 +821,7 @@ impl App {
                 self.backup_written_gen = self.backup_gen;
                 self.backup_saved_at = Some(b.saved_at);
             }
-            Err(e) => self.status = format!("Backup failed: {e:#}"),
+            Err(e) => self.set_status(format!("Backup failed: {e:#}")),
         }
         self.backup_last_write = Instant::now();
     }
@@ -1011,7 +1020,7 @@ impl App {
                 }
                 Err(e) => {
                     failed += 1;
-                    self.status = format!("Save failed: {e:#}");
+                    self.set_status(format!("Save failed: {e:#}"));
                 }
             }
         }
@@ -1303,7 +1312,9 @@ impl App {
             {
                 self.dialog_open_dir();
             }
-            ui.separator();
+        });
+        ui.separator();
+        ui.horizontal_wrapped(|ui| {
             if ui
                 .button("📥 Import YOLO bboxes")
                 .on_hover_text(
@@ -1375,7 +1386,9 @@ impl App {
             {
                 self.settings.save();
             }
-            ui.separator();
+        });
+        ui.separator();
+        ui.horizontal_wrapped(|ui| {
             if ui
                 .button("📥 Import COCO")
                 .on_hover_text("Replace all boxes and classes with those of a COCO json")
@@ -1409,7 +1422,9 @@ impl App {
                     self.export_coco(&p);
                 }
             }
-            ui.separator();
+        });
+        ui.separator();
+        ui.horizontal_wrapped(|ui| {
             let cropping = self.crop_job.is_some();
             if ui
                 .add_enabled(!cropping, egui::Button::new("Crop & Save"))
@@ -1972,7 +1987,7 @@ impl App {
                 let s = clamp01(n);
                 Drag::Draw { start: s, cur: s }
             } else {
-                self.set_status("Load classes before drawing boxes");
+                self.set_warning("Load classes before drawing boxes");
                 Drag::None
             };
         }
@@ -2202,14 +2217,18 @@ impl App {
             let finished = job.finished.lock().unwrap().take();
             match finished {
                 Some(msg) => {
-                    self.status = msg;
+                    self.set_status(msg);
                     self.crop_job = None;
                 }
                 None => ui.ctx().request_repaint_after(Duration::from_millis(100)),
             }
         }
         if !self.status.is_empty() {
-            ui.label(&self.status);
+            let mut text = RichText::new(&self.status);
+            if self.status_warn {
+                text = text.strong().color(Color32::LIGHT_RED);
+            }
+            ui.label(text);
         }
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(format!("zoom {:.0}%", self.zoom * 100.0)).weak());
