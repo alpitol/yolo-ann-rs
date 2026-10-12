@@ -838,19 +838,20 @@ impl App {
             return;
         };
         let known: HashSet<&str> = self.images.iter().map(String::as_str).collect();
-        match model::import_coco(path, &self.classes, &dir, &known) {
+        match model::import_coco(path, &dir, &known) {
             Ok(imp) => {
-                if self.classes.is_empty() {
-                    self.classes = imp.categories.clone();
-                    self.class_ids = model::ClassIds::default();
-                    self.cur_class = 0;
-                }
+                let replaced: HashSet<&str> = imp.images.keys().map(String::as_str).collect();
+                let kept = self.replace_classes(imp.categories.clone(), &replaced);
                 let n = imp.images.len();
                 let nb: usize = imp.images.values().map(Vec::len).sum();
+                // The file's boxes replace everything, also the undo history, which
+                // may hold classes of the old class list.
                 for (name, boxes) in imp.images {
                     let ann = self.ensure_ann(&name);
-                    ann.snapshot();
+                    ann.undo.clear();
+                    ann.redo.clear();
                     ann.boxes = boxes;
+                    ann.dirty = true;
                     ann.mark_exported();
                 }
                 self.selected = None;
@@ -858,9 +859,12 @@ impl App {
                 self.compute_visible();
                 self.update_prefetch();
                 let mut s = format!("Imported {nb} boxes for {n} images from {}", path.display());
+                if kept > 0 {
+                    s += &format!("; kept {kept} old classes still used by other images");
+                }
                 if imp.skipped_unknown_class > 0 {
                     s += &format!(
-                        "; skipped {} boxes with unknown class",
+                        "; skipped {} boxes with unknown category",
                         imp.skipped_unknown_class
                     );
                 }
@@ -871,6 +875,73 @@ impl App {
             }
             Err(e) => self.set_status(format!("COCO import failed: {e:#}")),
         }
+    }
+
+    /// Switch to the class list of an imported COCO file. Boxes of the images not
+    /// `replaced` by the import are remapped by class name; old classes they still
+    /// use are appended so no box changes class. Returns the number of appended classes.
+    fn replace_classes(&mut self, new: Vec<String>, replaced: &HashSet<&str>) -> usize {
+        let mut classes = new;
+        let n_new = classes.len();
+        let old_len = self.classes.len();
+        if !self.classes.is_empty() {
+            let mut used: Vec<usize> = self
+                .anns
+                .iter()
+                .filter(|(n, _)| !replaced.contains(n.as_str()))
+                .flat_map(|(_, a)| {
+                    a.boxes
+                        .iter()
+                        .chain(&a.exported)
+                        .chain(a.undo.iter().flatten())
+                        .chain(a.redo.iter().flatten())
+                })
+                .map(|b| b.class)
+                .collect();
+            used.sort_unstable();
+            used.dedup();
+            for c in used {
+                if let Some(name) = self.classes.get(c)
+                    && !classes.contains(name)
+                {
+                    classes.push(name.clone());
+                }
+            }
+        }
+        if classes == self.classes {
+            return 0;
+        }
+        // Without a class list, indices have no names: keep them as they are.
+        if old_len > 0 {
+            let map: Vec<usize> = self
+                .classes
+                .iter()
+                .map(|n| classes.iter().position(|c| c == n).unwrap_or(0))
+                .collect();
+            let n = classes.len();
+            for (_, a) in self
+                .anns
+                .iter_mut()
+                .filter(|(n, _)| !replaced.contains(n.as_str()))
+            {
+                for b in a
+                    .boxes
+                    .iter_mut()
+                    .chain(&mut a.exported)
+                    .chain(a.undo.iter_mut().flatten())
+                    .chain(a.redo.iter_mut().flatten())
+                {
+                    b.class = map.get(b.class).copied().unwrap_or(n + b.class - old_len);
+                }
+            }
+        }
+        self.classes = classes;
+        self.class_ids = model::ClassIds::default();
+        self.cur_class = 0;
+        self.classes_file = None;
+        self.settings.last_classes_file = None;
+        self.settings.save();
+        self.classes.len() - n_new
     }
 
     /// Exports every image with annotation data (including empty ones).

@@ -476,17 +476,15 @@ fn find_classes_file_in(dir: &Path) -> Option<PathBuf> {
 pub struct CocoImport {
     /// image file name -> boxes
     pub images: HashMap<String, Vec<BBox>>,
-    /// Classes from categories (sorted by id); used when no classes are loaded.
+    /// Classes from categories (sorted by id); box classes index into this.
     pub categories: Vec<String>,
     pub skipped_unknown_class: usize,
     pub skipped_unknown_image: usize,
 }
 
-/// Parses COCO json. `classes` maps category names to class indices; if empty,
-/// categories (sorted by id) become the classes.
+/// Parses COCO json. The categories, sorted by id, become the class list.
 pub fn import_coco(
     path: &Path,
-    classes: &[String],
     image_dir: &Path,
     known_images: &std::collections::HashSet<&str>,
 ) -> Result<CocoImport> {
@@ -504,14 +502,10 @@ pub fn import_coco(
         .unwrap_or_default();
     cats.sort();
     let categories: Vec<String> = cats.iter().map(|(_, n)| n.clone()).collect();
-    let class_list: &[String] = if classes.is_empty() {
-        &categories
-    } else {
-        classes
-    };
     let cat_to_class: HashMap<i64, usize> = cats
         .iter()
-        .filter_map(|(id, name)| Some((*id, class_list.iter().position(|c| c == name)?)))
+        .enumerate()
+        .map(|(i, (id, _))| (*id, i))
         .collect();
 
     struct Img {
@@ -706,7 +700,8 @@ mod tests {
         ));
         std::fs::write(&p, text).unwrap();
         let known: std::collections::HashSet<&str> = ["x.jpg"].into_iter().collect();
-        let imp = import_coco(&p, &classes, &dir, &known).unwrap();
+        let imp = import_coco(&p, &dir, &known).unwrap();
+        assert_eq!(imp.categories, classes);
         let got = &imp.images["x.jpg"][0];
         assert_eq!(got.class, 1);
         assert!((got.x0 - 0.25).abs() < 1e-9 && (got.y1 - 1.0).abs() < 1e-9);

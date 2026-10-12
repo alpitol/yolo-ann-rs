@@ -36,7 +36,7 @@ cargo run --release
 |---|---|
 | `-l, --labels DIR` | Import YOLO labels from this folder (also the save target). Default: the image folder, if it contains label files, else the YOLO layout's `labels` folder: the image folder path with its last `images` component replaced by `labels` (`ds/images/train` → `ds/labels/train`), if it exists. Shown as *autoselected* |
 | `-c, --classes FILE` | Class names: one per line, `<id> <name>` per line (a `metadata.txt`, see below), or an Ultralytics `data.yaml` (`names` as a list or an `{index: name}` map). Auto-detected: `classes.txt`, `obj.names`, `metadata.txt`, `*.names`, `data.yaml`, `dataset.yaml` in the image folder or the imported labels folder, or in their parent if the folder is named `images` or `labels`. The last used file is remembered |
-| `--coco FILE` | Import a COCO json on startup. Categories are matched to classes by name. If no classes are loaded, the COCO categories are used |
+| `--coco FILE` | Import a COCO json on startup. Its categories, sorted by id, replace the class list (see **Import COCO**) |
 | `--ahead N` / `--behind N` | Prefetch window (default 6 / 2) |
 | `--workers N` | Decoder threads |
 | `--autosave true` | Write the label file automatically when leaving an image |
@@ -83,7 +83,7 @@ Labels come only from what you import, from `.txt` files next to the images, or 
   - *Export to another folder* writes every image with data to a new or existing folder, which then becomes the labels folder.
 
   Ctrl+S without a labels folder asks for one. `classes.txt` is added if the folder has none. Writes are atomic.
-- **Import COCO** matches categories to classes by name. **Export COCO** writes standard COCO detection json (`info`, `licenses`, `categories`, `images`, `annotations`) with one image or annotation per line. Category id = class + 1, and coordinates are pixels rounded to 0.01. Images with empty annotation data are included as background images. The default file name is `<folder>_HUMAN_FIXED.json`.
+- **Import COCO** replaces the boxes of the images listed in the file, and the class list with the file's categories sorted by id. Boxes of other images are remapped by class name; old classes they still use are appended to the list. Only `bbox` is read; `segmentation` (polygon or RLE) and `iscrowd` are ignored. **Export COCO** writes standard COCO detection json (`info`, `licenses`, `categories`, `images`, `annotations`) with one image or annotation per line. Category id = class + 1, and coordinates are pixels rounded to 0.01. Images with empty annotation data are included as background images. The default file name is `<folder>_HUMAN_FIXED.json`.
 - **Crop & Save** writes one crop per box to a chosen folder.
 - **Automatic backup:** all unsaved annotations are written about 2 s after every change, and on every image switch and on exit, to
   `~/.local/share/yolo-ann/backups/<folder>-<hash>.json` (one file per image folder). The previous session's file is kept as `*.prev.json`.

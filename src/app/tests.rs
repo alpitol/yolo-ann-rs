@@ -314,6 +314,36 @@ fn coco_import_export_roundtrip() {
     assert!((ann.boxes[0].x0 - 0.4).abs() < 1e-6);
 }
 
+#[test]
+fn coco_import_replaces_classes() {
+    let root = temp_root("coco_classes");
+    let dir = make_dataset(&root);
+    let mut h = harness(&dir);
+    wait_loaded(&mut h);
+    assert_eq!(h.state().anns["img2.png"].boxes[0].class, 1, "boat");
+    let coco = root.join("c.json");
+    std::fs::write(
+        &coco,
+        r#"{"images":[{"id":7,"file_name":"img3.png","width":400,"height":200}],
+            "annotations":[{"id":1,"image_id":7,"category_id":0,"bbox":[40,20,80,40],"iscrowd":0,
+                "segmentation":{"size":[200,400],"counts":"abc"}}],
+            "categories":[{"id":0,"name":"powerboat"},{"id":1,"name":"ship"}]}"#,
+    )
+    .unwrap();
+    h.state_mut().import_coco(&coco);
+    h.step();
+    let a = h.state();
+    assert_eq!(
+        a.classes,
+        ["powerboat", "ship", "boat"],
+        "COCO categories, plus old classes other images still use"
+    );
+    assert_eq!(a.anns["img3.png"].boxes[0].class, 0);
+    assert_eq!(a.anns["img2.png"].boxes[0].class, 2, "still boat");
+    assert!(a.classes_file.is_none());
+    assert!(a.status.contains("kept 1 old classes"), "{}", a.status);
+}
+
 fn visible_names(h: &Harness<'static, App>) -> Vec<String> {
     let a = h.state();
     a.visible.iter().map(|&i| a.images[i].clone()).collect()
