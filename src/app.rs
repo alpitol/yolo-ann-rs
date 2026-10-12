@@ -88,6 +88,12 @@ struct CropJob {
     finished: Arc<Mutex<Option<String>>>,
 }
 
+/// An action that replaces all annotation data.
+enum Discard {
+    OpenDir(PathBuf),
+    ImportCoco(PathBuf),
+}
+
 pub struct App {
     /// Screen rect of the image in the last frame (for tests).
     pub(crate) last_img_rect: Option<Rect>,
@@ -139,6 +145,8 @@ pub struct App {
     show_quit_dialog: bool,
     /// Image whose file deletion awaits confirmation.
     confirm_delete: Option<String>,
+    /// Action waiting for confirmation to discard unsaved edits.
+    confirm_discard: Option<Discard>,
     allow_close: bool,
     crop_job: Option<CropJob>,
 }
@@ -188,6 +196,7 @@ impl App {
             pending_restore: None,
             show_quit_dialog: false,
             confirm_delete: None,
+            confirm_discard: None,
             allow_close: false,
             crop_job: None,
         };
@@ -296,10 +305,15 @@ impl App {
         self.backup_written_gen = 0;
         self.backup_first_write = true;
 
+        // A new folder starts from scratch: no classes carried over from the last one.
+        self.classes.clear();
+        self.class_ids = model::ClassIds::default();
+        self.cur_class = 0;
+        self.classes_file = None;
+        self.settings.last_classes_file = None;
         let classes_file = classes_file
             .filter(|p| p.is_file())
-            .or_else(|| model::find_classes_file(dir))
-            .or_else(|| self.classes_file.clone());
+            .or_else(|| model::find_classes_file(dir));
         if let Some(c) = classes_file {
             self.load_classes(&c);
         }
@@ -832,6 +846,8 @@ impl App {
         }
     }
 
+    /// Replaces all annotation data, the class list and the labels folder with the
+    /// contents of a COCO file.
     fn import_coco(&mut self, path: &Path) {
         let Some(dir) = self.image_dir.clone() else {
             self.set_status("Open an image folder before importing COCO");
@@ -840,28 +856,33 @@ impl App {
         let known: HashSet<&str> = self.images.iter().map(String::as_str).collect();
         match model::import_coco(path, &dir, &known) {
             Ok(imp) => {
-                let replaced: HashSet<&str> = imp.images.keys().map(String::as_str).collect();
-                let kept = self.replace_classes(imp.categories.clone(), &replaced);
+                self.classes = imp.categories;
+                self.class_ids = model::ClassIds::default();
+                self.cur_class = 0;
+                self.classes_file = None;
+                self.settings.last_classes_file = None;
+                self.labels_dir = None;
+                self.labels_auto = false;
+                self.settings.last_labels_dir = None;
+                self.settings.save();
                 let n = imp.images.len();
                 let nb: usize = imp.images.values().map(Vec::len).sum();
-                // The file's boxes replace everything, also the undo history, which
-                // may hold classes of the old class list.
-                for (name, boxes) in imp.images {
-                    let ann = self.ensure_ann(&name);
-                    ann.undo.clear();
-                    ann.redo.clear();
-                    ann.boxes = boxes;
-                    ann.dirty = true;
-                    ann.mark_exported();
-                }
+                self.anns = imp
+                    .images
+                    .into_iter()
+                    .map(|(name, boxes)| {
+                        let mut ann = ImageAnn::clean(boxes);
+                        ann.dirty = true;
+                        (name, ann)
+                    })
+                    .collect();
+                self.cur_untracked = false;
                 self.selected = None;
+                self.drag = Drag::None;
                 self.mark_changed();
                 self.compute_visible();
                 self.update_prefetch();
                 let mut s = format!("Imported {nb} boxes for {n} images from {}", path.display());
-                if kept > 0 {
-                    s += &format!("; kept {kept} old classes still used by other images");
-                }
                 if imp.skipped_unknown_class > 0 {
                     s += &format!(
                         "; skipped {} boxes with unknown category",
@@ -877,71 +898,21 @@ impl App {
         }
     }
 
-    /// Switch to the class list of an imported COCO file. Boxes of the images not
-    /// `replaced` by the import are remapped by class name; old classes they still
-    /// use are appended so no box changes class. Returns the number of appended classes.
-    fn replace_classes(&mut self, new: Vec<String>, replaced: &HashSet<&str>) -> usize {
-        let mut classes = new;
-        let n_new = classes.len();
-        let old_len = self.classes.len();
-        if !self.classes.is_empty() {
-            let mut used: Vec<usize> = self
-                .anns
-                .iter()
-                .filter(|(n, _)| !replaced.contains(n.as_str()))
-                .flat_map(|(_, a)| {
-                    a.boxes
-                        .iter()
-                        .chain(&a.exported)
-                        .chain(a.undo.iter().flatten())
-                        .chain(a.redo.iter().flatten())
-                })
-                .map(|b| b.class)
-                .collect();
-            used.sort_unstable();
-            used.dedup();
-            for c in used {
-                if let Some(name) = self.classes.get(c)
-                    && !classes.contains(name)
-                {
-                    classes.push(name.clone());
-                }
-            }
+    /// Runs an action that replaces all annotation data, asking first if that
+    /// would discard edits.
+    fn request_discard(&mut self, action: Discard) {
+        if self.has_unsaved() {
+            self.confirm_discard = Some(action);
+        } else {
+            self.run_discard(action);
         }
-        if classes == self.classes {
-            return 0;
+    }
+
+    fn run_discard(&mut self, action: Discard) {
+        match action {
+            Discard::OpenDir(d) => self.open_dir(&d, None, None),
+            Discard::ImportCoco(p) => self.import_coco(&p),
         }
-        // Without a class list, indices have no names: keep them as they are.
-        if old_len > 0 {
-            let map: Vec<usize> = self
-                .classes
-                .iter()
-                .map(|n| classes.iter().position(|c| c == n).unwrap_or(0))
-                .collect();
-            let n = classes.len();
-            for (_, a) in self
-                .anns
-                .iter_mut()
-                .filter(|(n, _)| !replaced.contains(n.as_str()))
-            {
-                for b in a
-                    .boxes
-                    .iter_mut()
-                    .chain(&mut a.exported)
-                    .chain(a.undo.iter_mut().flatten())
-                    .chain(a.redo.iter_mut().flatten())
-                {
-                    b.class = map.get(b.class).copied().unwrap_or(n + b.class - old_len);
-                }
-            }
-        }
-        self.classes = classes;
-        self.class_ids = model::ClassIds::default();
-        self.cur_class = 0;
-        self.classes_file = None;
-        self.settings.last_classes_file = None;
-        self.settings.save();
-        self.classes.len() - n_new
     }
 
     /// Exports every image with annotation data (including empty ones).
@@ -1180,6 +1151,7 @@ impl App {
         if ctx.text_edit_focused()
             || self.show_quit_dialog
             || self.confirm_delete.is_some()
+            || self.confirm_discard.is_some()
             || egui::Popup::is_any_open(ctx)
         {
             return;
@@ -1296,7 +1268,7 @@ impl App {
             d = d.set_directory(p);
         }
         if let Some(dir) = d.pick_folder() {
-            self.open_dir(&dir, None, None);
+            self.request_discard(Discard::OpenDir(dir));
         }
     }
 
@@ -1400,14 +1372,17 @@ impl App {
                 self.settings.save();
             }
             ui.separator();
-            if ui.button("📥 Import COCO").clicked()
+            if ui
+                .button("📥 Import COCO")
+                .on_hover_text("Replace all boxes and classes with those of a COCO json")
+                .clicked()
                 && let Some(p) = rfd::FileDialog::new()
                     .set_directory(self.coco_dir())
                     .add_filter("COCO json", &["json"])
                     .pick_file()
             {
                 self.remember_file_dir("coco", &p);
-                self.import_coco(&p);
+                self.request_discard(Discard::ImportCoco(p));
             }
             if ui
                 .button("💾 Export COCO")
@@ -2310,6 +2285,44 @@ impl App {
         }
     }
 
+    fn discard_dialog(&mut self, ctx: &egui::Context) {
+        let Some(action) = &self.confirm_discard else {
+            return;
+        };
+        let (what, go) = match action {
+            Discard::OpenDir(_) => (
+                "Opening another folder clears them. They stay in this folder's backup.",
+                "Open folder",
+            ),
+            Discard::ImportCoco(_) => (
+                "Importing COCO replaces all boxes and classes, so they are lost.",
+                "Discard & import",
+            ),
+        };
+        let n = self.unsaved_count();
+        let (mut confirm, mut cancel) = (false, false);
+        let resp = egui::Modal::new(egui::Id::new("discard_dialog")).show(ctx, |ui| {
+            ui.heading("Discard unsaved annotations?");
+            ui.label(format!(
+                "{n} images have box edits that are not saved to YOLO label files or \
+                 exported to COCO."
+            ));
+            ui.label(what);
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                confirm = ui.button(go).clicked();
+                cancel = ui.button("Cancel").clicked();
+            });
+        });
+        if confirm {
+            if let Some(a) = self.confirm_discard.take() {
+                self.run_discard(a);
+            }
+        } else if cancel || resp.should_close() {
+            self.confirm_discard = None;
+        }
+    }
+
     fn quit_dialog(&mut self, ctx: &egui::Context) {
         if !self.show_quit_dialog {
             return;
@@ -2390,6 +2403,7 @@ impl eframe::App for App {
         egui::CentralPanel::no_frame().show(ui, |ui| self.canvas(ui));
         self.quit_dialog(&ctx);
         self.delete_dialog(&ctx);
+        self.discard_dialog(&ctx);
 
         // Debounced automatic backup.
         if self.backup_gen != self.backup_written_gen {

@@ -315,12 +315,15 @@ fn coco_import_export_roundtrip() {
 }
 
 #[test]
-fn coco_import_replaces_classes() {
-    let root = temp_root("coco_classes");
+fn coco_import_replaces_everything() {
+    let root = temp_root("coco_replace");
     let dir = make_dataset(&root);
     let mut h = harness(&dir);
     wait_loaded(&mut h);
-    assert_eq!(h.state().anns["img2.png"].boxes[0].class, 1, "boat");
+    assert!(h.state().labels_dir.is_some());
+    let (p0, p1) = (norm_to_screen(&h, 0.1, 0.1), norm_to_screen(&h, 0.3, 0.3));
+    drag(&mut h, p0, p1);
+    assert!(h.state().has_unsaved());
     let coco = root.join("c.json");
     std::fs::write(
         &coco,
@@ -330,18 +333,57 @@ fn coco_import_replaces_classes() {
             "categories":[{"id":0,"name":"powerboat"},{"id":1,"name":"ship"}]}"#,
     )
     .unwrap();
-    h.state_mut().import_coco(&coco);
+
+    // Unsaved edits: asks first, Cancel keeps everything.
+    h.state_mut()
+        .request_discard(super::Discard::ImportCoco(coco.clone()));
+    h.step();
+    h.step();
+    assert!(h.state().confirm_discard.is_some());
+    h.get_by_label("Cancel").click();
+    h.step();
+    h.step();
+    assert!(h.state().confirm_discard.is_none());
+    assert_eq!(h.state().anns["img1.png"].boxes.len(), 1);
+    assert_eq!(h.state().classes, ["ship", "boat", "buoy"]);
+
+    h.state_mut()
+        .request_discard(super::Discard::ImportCoco(coco.clone()));
+    h.step();
+    h.step();
+    h.get_by_label("Discard & import").click();
+    h.step();
     h.step();
     let a = h.state();
-    assert_eq!(
-        a.classes,
-        ["powerboat", "ship", "boat"],
-        "COCO categories, plus old classes other images still use"
-    );
+    assert!(a.confirm_discard.is_none());
+    assert_eq!(a.classes, ["powerboat", "ship"]);
+    assert_eq!(a.anns.keys().collect::<Vec<_>>(), ["img3.png"]);
     assert_eq!(a.anns["img3.png"].boxes[0].class, 0);
-    assert_eq!(a.anns["img2.png"].boxes[0].class, 2, "still boat");
-    assert!(a.classes_file.is_none());
-    assert!(a.status.contains("kept 1 old classes"), "{}", a.status);
+    assert!(a.labels_dir.is_none() && a.classes_file.is_none());
+    assert!(a.settings.last_classes_file.is_none());
+    assert!(!a.has_unsaved());
+}
+
+#[test]
+fn opening_folder_clears_classes() {
+    let root = temp_root("open_clears");
+    let dir = make_dataset(&root);
+    let other = root.join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    image::RgbImage::from_pixel(40, 20, image::Rgb([9, 9, 9]))
+        .save(other.join("a.png"))
+        .unwrap();
+    let mut h = harness(&dir);
+    wait_loaded(&mut h);
+    assert_eq!(h.state().classes.len(), 3);
+    h.state_mut()
+        .request_discard(super::Discard::OpenDir(other.clone()));
+    h.step();
+    let a = h.state();
+    assert_eq!(a.images, ["a.png"]);
+    assert!(a.classes.is_empty(), "classes not carried over");
+    assert!(a.classes_file.is_none() && a.settings.last_classes_file.is_none());
+    assert!(a.anns.is_empty() && a.labels_dir.is_none());
 }
 
 fn visible_names(h: &Harness<'static, App>) -> Vec<String> {
@@ -404,17 +446,18 @@ fn data_filter_and_visit_rules() {
     h.step();
     assert_eq!(cur_name(&h), "img3.png");
 
-    // COCO import adds its images to the filtered list.
+    // COCO import replaces all annotation data with its images.
     let coco = dir.parent().unwrap().join("c.json");
     std::fs::write(
         &coco,
-        r#"{"images":[{"id":1,"file_name":"img11.png","width":400,"height":200}],
+        r#"{"images":[{"id":1,"file_name":"img11.png","width":400,"height":200},
+                      {"id":2,"file_name":"img3.png","width":400,"height":200}],
             "annotations":[],"categories":[{"id":1,"name":"ship"}]}"#,
     )
     .unwrap();
     h.state_mut().import_coco(&coco);
     h.step();
-    assert_eq!(visible_names(&h), ["img2.png", "img3.png", "img11.png"]);
+    assert_eq!(visible_names(&h), ["img3.png", "img11.png"]);
     assert!(!h.state().has_unsaved(), "imported data is not an edit");
 
     // Drawing is an edit; undoing it is not.
