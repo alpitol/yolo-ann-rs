@@ -751,3 +751,24 @@ fn wheel_zoom_is_instant() {
     }
     assert_eq!(h.state().zoom, z1, "no trailing animation");
 }
+
+#[test]
+fn f11_toggles_fullscreen() {
+    let dir = make_dataset(&temp_root("fullscreen"));
+    let mut h = harness(&dir);
+    wait_loaded(&mut h);
+    h.event(Event::Key {
+        key: Key::F11,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.step();
+    let full = h.output().viewport_output.values().any(|v| {
+        v.commands
+            .iter()
+            .any(|c| matches!(c, egui::ViewportCommand::Fullscreen(true)))
+    });
+    assert!(full, "F11 should request full screen");
+}

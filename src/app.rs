@@ -1147,6 +1147,10 @@ impl App {
     // ------------------------------------------------------------ keyboard
 
     fn handle_keys(&mut self, ctx: &egui::Context) {
+        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::F11)) {
+            let full = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!full));
+        }
         // An open menu gets the keys (Escape closes it, arrows don't navigate behind it).
         if ctx.text_edit_focused()
             || self.show_quit_dialog
@@ -1443,13 +1447,13 @@ impl App {
         let n = b.images.len();
         let when = backup::ago(b.saved_at);
         let mut action = 0;
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(format!(
-                    "⚠ Backup from {when} has unsaved annotations for {n} images."
-                ))
-                .color(Color32::from_rgb(255, 200, 80)),
-            );
+        ui.label(
+            RichText::new(format!(
+                "⚠ Backup from {when} has unsaved annotations for {n} images."
+            ))
+            .color(Color32::from_rgb(255, 200, 80)),
+        );
+        ui.horizontal_wrapped(|ui| {
             if ui.button("Restore").clicked() {
                 action = 1;
             }
@@ -1487,6 +1491,9 @@ impl App {
 
     fn side_panel(&mut self, ui: &mut egui::Ui) {
         ui.add_space(4.0);
+        self.toolbar(ui);
+        self.restore_banner(ui);
+        ui.separator();
         ui.horizontal(|ui| {
             ui.label("Search:");
             let r = ui.add(
@@ -1534,7 +1541,6 @@ impl App {
         }
         let mut clicked = None;
         let mut untrack = None;
-        let mut copied = None;
         let mut delete = None;
         let out = area.show_rows(ui, row_h, self.visible.len(), |ui, range| {
             for vi in range {
@@ -1558,7 +1564,6 @@ impl App {
                 r.context_menu(|ui| {
                     if ui.button("Copy file name").clicked() {
                         ui.ctx().copy_text(name.clone());
-                        copied = Some(i);
                         ui.close();
                     }
                     let b = ui
@@ -1605,9 +1610,6 @@ impl App {
             .changed()
         {
             self.apply_filters();
-        }
-        if let Some(i) = copied {
-            self.set_status(format!("Copied file name {}", self.images[i]));
         }
         if let Some(i) = delete {
             self.confirm_delete = Some(self.images[i].clone());
@@ -1683,6 +1685,9 @@ impl App {
                 }
             });
 
+        ui.separator();
+        self.status_info(ui);
+
         // Selected box information.
         ui.separator();
         self.bbox_info(ui);
@@ -1702,6 +1707,7 @@ impl App {
                     ("Mouse wheel", "zoom"),
                     ("Middle / right drag", "pan"),
                     ("F / Home", "reset zoom"),
+                    ("F11", "toggle full screen"),
                     ("Esc", "deselect / cancel"),
                     ("Ctrl+Z / Ctrl+Y", "undo / redo (per image)"),
                     ("Ctrl+S", "update YOLO labels folder"),
@@ -2184,53 +2190,51 @@ impl App {
         }
     }
 
-    fn status_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            if let Some(job) = &self.crop_job {
-                let (d, t) = (
-                    job.done.load(Ordering::Relaxed),
-                    job.total.load(Ordering::Relaxed),
-                );
-                ui.add(
-                    egui::ProgressBar::new(d as f32 / t.max(1) as f32)
-                        .desired_width(160.0)
-                        .text(format!("crop {d}/{t}")),
-                );
-                let finished = job.finished.lock().unwrap().take();
-                match finished {
-                    Some(msg) => {
-                        self.status = msg;
-                        self.crop_job = None;
-                    }
-                    None => ui.ctx().request_repaint_after(Duration::from_millis(100)),
+    fn status_info(&mut self, ui: &mut egui::Ui) {
+        if let Some(job) = &self.crop_job {
+            let (d, t) = (
+                job.done.load(Ordering::Relaxed),
+                job.total.load(Ordering::Relaxed),
+            );
+            ui.add(
+                egui::ProgressBar::new(d as f32 / t.max(1) as f32).text(format!("crop {d}/{t}")),
+            );
+            let finished = job.finished.lock().unwrap().take();
+            match finished {
+                Some(msg) => {
+                    self.status = msg;
+                    self.crop_job = None;
                 }
+                None => ui.ctx().request_repaint_after(Duration::from_millis(100)),
             }
+        }
+        if !self.status.is_empty() {
             ui.label(&self.status);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if let Some(t) = self.backup_saved_at {
-                    let tip = self
-                        .backup_path
-                        .as_ref()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_default();
-                    ui.label(RichText::new(format!("backup {}", backup::ago(t))).weak())
-                        .on_hover_text(tip);
-                }
-                let ready = self
-                    .cache
-                    .values()
-                    .filter(|s| matches!(s, Slot::Ready { .. }))
-                    .count();
-                ui.label(RichText::new(format!("cache {ready}")).weak());
-                ui.label(RichText::new(format!("zoom {:.0}%", self.zoom * 100.0)).weak());
-                if let Some((x, y)) = self.hover_px {
-                    ui.label(
-                        RichText::new(format!("{:.0}, {:.0}", x, y))
-                            .monospace()
-                            .weak(),
-                    );
-                }
-            });
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(format!("zoom {:.0}%", self.zoom * 100.0)).weak());
+            let ready = self
+                .cache
+                .values()
+                .filter(|s| matches!(s, Slot::Ready { .. }))
+                .count();
+            ui.label(RichText::new(format!("cache {ready}")).weak());
+            if let Some(t) = self.backup_saved_at {
+                let tip = self
+                    .backup_path
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                ui.label(RichText::new(format!("backup {}", backup::ago(t))).weak())
+                    .on_hover_text(tip);
+            }
+            if let Some((x, y)) = self.hover_px {
+                ui.label(
+                    RichText::new(format!("{:.0}, {:.0}", x, y))
+                        .monospace()
+                        .weak(),
+                );
+            }
         });
     }
 
@@ -2389,13 +2393,6 @@ impl eframe::App for App {
 
         self.handle_keys(&ctx);
 
-        egui::Panel::top("toolbar").show(ui, |ui| {
-            ui.add_space(2.0);
-            self.toolbar(ui);
-            self.restore_banner(ui);
-            ui.add_space(2.0);
-        });
-        egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         egui::Panel::left("side")
             .resizable(true)
             .default_size(320.0)

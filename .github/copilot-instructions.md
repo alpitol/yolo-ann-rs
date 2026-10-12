@@ -20,7 +20,7 @@ Dev builds compile all dependencies with `opt-level = 3` (`[profile.dev.package.
 ## Architecture
 
 - `main.rs` – clap `Args` → `app::Config`, then `eframe::run_native`. New CLI flags must be threaded through `Config` and documented in the README options table.
-- `app.rs` – one large `App` struct holding all UI and session state. `eframe::App::ui` polls the loader, handles keys, draws toolbar/side panel/canvas/status bar, then runs the debounced backup. Sections are separated by `// ---- state / caching / saving` comment banners.
+- `app.rs` – one large `App` struct holding all UI and session state. `eframe::App::ui` polls the loader, handles keys, draws the side panel (toolbar buttons, image list, classes, status, box info) and canvas, then runs the debounced backup. Sections are separated by `// ---- state / caching / saving` comment banners.
 - `model.rs` – pure data + file formats: `BBox`, `ImageAnn` (per-image boxes with undo/redo), YOLO txt parse/format, class files (`classes.txt`, `<id> <name>` `metadata.txt`, Ultralytics-style `data.yaml`), COCO import/export, `write_atomic`, natural sort, label-dir discovery. No egui here.
 - `loader.rs` – decoder thread pool. `set_wanted` **replaces** the whole job queue (priority order) whenever the current image changes, so stale prefetches are dropped. Results come back over an mpsc channel and become textures in `App::poll_loader`; `App.cache` is an LRU of `Slot`s evicted down to `ahead + behind + 5`. Images larger than 8192 px are downscaled for display, but the original size is kept for coordinates.
 - `backup.rs` – crash backup (`Backup`, one JSON per image folder, rotated to `*.prev.json` on the first write of a session) and persistent `Settings`. `$YOLO_ANN_HOME` overrides the data/config dirs.

@@ -57,6 +57,7 @@ cargo run --release
 | Mouse wheel | zoom at cursor |
 | Middle / right drag | pan |
 | F / Home | reset zoom |
+| F11 | toggle full screen (hides the window title bar) |
 | Esc | deselect / cancel drag |
 | Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z | undo / redo (per image) |
 | Ctrl+S | update the YOLO labels folder |
