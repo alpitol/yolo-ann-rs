@@ -137,6 +137,8 @@ pub struct App {
     backup_saved_at: Option<u64>,
     pending_restore: Option<Backup>,
     show_quit_dialog: bool,
+    /// Image whose file deletion awaits confirmation.
+    confirm_delete: Option<String>,
     allow_close: bool,
     crop_job: Option<CropJob>,
 }
@@ -185,6 +187,7 @@ impl App {
             backup_saved_at: None,
             pending_restore: None,
             show_quit_dialog: false,
+            confirm_delete: None,
             allow_close: false,
             crop_job: None,
         };
@@ -481,6 +484,63 @@ impl App {
             self.go_to(next, false);
         }
         self.update_prefetch();
+    }
+
+    /// Permanently delete an image file and its label file in the labels folder,
+    /// and drop the image from the session.
+    fn delete_image(&mut self, name: &str) {
+        let Some(idx) = self.images.iter().position(|n| n == name) else {
+            return;
+        };
+        let Some(path) = self.image_path(idx) else {
+            return;
+        };
+        if let Err(e) = std::fs::remove_file(&path) {
+            self.set_status(format!("Could not delete {}: {e}", path.display()));
+            return;
+        }
+        let mut status = format!("Deleted {}", path.display());
+        if let Some(lp) = self
+            .labels_dir
+            .as_ref()
+            .map(|ld| model::label_path(ld, name))
+            && lp.is_file()
+        {
+            match std::fs::remove_file(&lp) {
+                Ok(()) => status.push_str(" and its label file"),
+                Err(e) => status.push_str(&format!("; could not delete {}: {e}", lp.display())),
+            }
+        }
+        self.images.remove(idx);
+        self.anns.remove(name);
+        self.cache.remove(&path);
+        let was_cur = self.cur == Some(idx);
+        self.cur = match self.cur {
+            Some(c) if c == idx => None,
+            Some(c) if c > idx => Some(c - 1),
+            c => c,
+        };
+        self.mark_changed();
+        self.compute_visible();
+        if was_cur {
+            self.cur_untracked = false;
+            self.selected = None;
+            self.drag = Drag::None;
+            let next = self
+                .visible
+                .iter()
+                .find(|&&i| i >= idx)
+                .or(self.visible.last())
+                .copied()
+                .or_else(|| (!self.images.is_empty()).then(|| idx.min(self.images.len() - 1)));
+            match next {
+                Some(n) => self.go_to(n, false),
+                None => self.settings.last_image = None,
+            }
+        }
+        self.update_prefetch();
+        self.write_backup(true);
+        self.set_status(status);
     }
 
     /// After the search text or the data filter changed: jump to the first
@@ -1046,9 +1106,15 @@ impl App {
 
     fn handle_keys(&mut self, ctx: &egui::Context) {
         // An open menu gets the keys (Escape closes it, arrows don't navigate behind it).
-        if ctx.text_edit_focused() || self.show_quit_dialog || egui::Popup::is_any_open(ctx) {
+        if ctx.text_edit_focused()
+            || self.show_quit_dialog
+            || self.confirm_delete.is_some()
+            || egui::Popup::is_any_open(ctx)
+        {
             return;
         }
+        // Extra Shift is ignored by plain key matching, so Shift+Delete goes first.
+        let del_image = ctx.input_mut(|i| i.consume_key(Modifiers::SHIFT, Key::Delete));
         let (right, left, up, down, del, esc, undo, redo, save, open, fit, digit) =
             ctx.input_mut(|i| {
                 let mut del = i.count_and_consume_key(Modifiers::NONE, Key::Delete)
@@ -1097,6 +1163,9 @@ impl App {
         }
         if del > 0 {
             self.delete_selected();
+        }
+        if del_image {
+            self.confirm_delete = self.cur_name().map(String::from);
         }
         if esc {
             self.drag = Drag::None;
@@ -1419,6 +1488,8 @@ impl App {
         }
         let mut clicked = None;
         let mut untrack = None;
+        let mut copied = None;
+        let mut delete = None;
         let out = area.show_rows(ui, row_h, self.visible.len(), |ui, range| {
             for vi in range {
                 let i = self.visible[vi];
@@ -1439,6 +1510,11 @@ impl App {
                     clicked = Some(i);
                 }
                 r.context_menu(|ui| {
+                    if ui.button("Copy file name").clicked() {
+                        ui.ctx().copy_text(name.clone());
+                        copied = Some(i);
+                        ui.close();
+                    }
                     let b = ui
                         .add_enabled(
                             self.can_untrack(name),
@@ -1456,6 +1532,18 @@ impl App {
                         untrack = Some(i);
                         ui.close();
                     }
+                    ui.separator();
+                    if ui
+                        .button("Delete file…")
+                        .on_hover_text(
+                            "Permanently delete the image file and its label file from disk \
+                             (asks for confirmation; Shift+Delete for the current image)",
+                        )
+                        .clicked()
+                    {
+                        delete = Some(i);
+                        ui.close();
+                    }
                 });
             }
         });
@@ -1471,6 +1559,12 @@ impl App {
             .changed()
         {
             self.apply_filters();
+        }
+        if let Some(i) = copied {
+            self.set_status(format!("Copied file name {}", self.images[i]));
+        }
+        if let Some(i) = delete {
+            self.confirm_delete = Some(self.images[i].clone());
         }
         if let Some(i) = clicked {
             self.go_to(i, true);
@@ -2094,6 +2188,57 @@ impl App {
         });
     }
 
+    fn delete_dialog(&mut self, ctx: &egui::Context) {
+        let Some(name) = self.confirm_delete.clone() else {
+            return;
+        };
+        let Some(path) = self
+            .images
+            .iter()
+            .position(|n| *n == name)
+            .and_then(|i| self.image_path(i))
+        else {
+            self.confirm_delete = None;
+            return;
+        };
+        let label = self
+            .labels_dir
+            .as_ref()
+            .map(|ld| model::label_path(ld, &name))
+            .filter(|p| p.is_file());
+        let boxes = self.anns.get(&name).map_or(0, |a| a.boxes.len());
+        let mut confirm = false;
+        let resp = egui::Modal::new(egui::Id::new("delete_dialog")).show(ctx, |ui| {
+            ui.heading("Delete image file?");
+            ui.label("This permanently deletes from disk and cannot be undone:");
+            ui.label(RichText::new(path.display().to_string()).monospace());
+            if let Some(lp) = &label {
+                ui.label(RichText::new(lp.display().to_string()).monospace());
+            }
+            if boxes > 0 {
+                ui.label(
+                    RichText::new(format!("Its {boxes} boxes are lost too."))
+                        .color(Color32::from_rgb(255, 200, 80)),
+                );
+            }
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                let del = egui::Button::new(RichText::new("Delete").color(Color32::WHITE))
+                    .fill(Color32::from_rgb(160, 40, 40));
+                confirm = ui.add(del).clicked();
+                if ui.button("Cancel").clicked() {
+                    self.confirm_delete = None;
+                }
+            });
+        });
+        if confirm {
+            self.confirm_delete = None;
+            self.delete_image(&name);
+        } else if resp.should_close() {
+            self.confirm_delete = None;
+        }
+    }
+
     fn quit_dialog(&mut self, ctx: &egui::Context) {
         if !self.show_quit_dialog {
             return;
@@ -2173,6 +2318,7 @@ impl eframe::App for App {
             .show(ui, |ui| self.side_panel(ui));
         egui::CentralPanel::no_frame().show(ui, |ui| self.canvas(ui));
         self.quit_dialog(&ctx);
+        self.delete_dialog(&ctx);
 
         // Debounced automatic backup.
         if self.backup_gen != self.backup_written_gen {

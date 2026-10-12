@@ -576,6 +576,83 @@ fn untrack_empty_image() {
 }
 
 #[test]
+fn copy_file_name_from_list_menu() {
+    let dir = make_dataset(&temp_root("copy_name"));
+    let mut h = harness(&dir);
+    wait_loaded(&mut h);
+    h.get_by_label("img10.png").click_secondary();
+    h.step();
+    h.step();
+    h.get_by_label("Copy file name").click();
+    h.step();
+    let copied = h
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .any(|c| matches!(c, egui::OutputCommand::CopyText(t) if t == "img10.png"));
+    assert!(copied, "{:?}", h.output().platform_output.commands);
+    h.step();
+    assert!(h.query_by_label("Copy file name").is_none(), "menu closed");
+    assert_eq!(cur_name(&h), "img1.png", "copying doesn't navigate");
+}
+
+#[test]
+fn delete_image_file() {
+    let dir = make_dataset(&temp_root("delete_file"));
+    let mut h = harness(&dir);
+    wait_loaded(&mut h);
+    h.key_press(Key::ArrowRight); // img1 becomes data, img2 has a label file
+    h.step();
+    assert_eq!(cur_name(&h), "img2.png");
+
+    // Shift+Delete asks first; Escape cancels and keeps the box and the file.
+    h.key_press_modifiers(Modifiers::SHIFT, Key::Delete);
+    h.step();
+    h.step();
+    assert_eq!(h.state().confirm_delete.as_deref(), Some("img2.png"));
+    assert_eq!(h.state().anns["img2.png"].boxes.len(), 1);
+    h.key_press(Key::Escape);
+    h.step();
+    h.step();
+    assert!(h.state().confirm_delete.is_none());
+    assert!(dir.join("img2.png").is_file());
+
+    h.key_press_modifiers(Modifiers::SHIFT, Key::Delete);
+    h.step();
+    h.step();
+    h.get_by_label("Delete").click();
+    h.step();
+    h.step();
+    assert!(h.state().confirm_delete.is_none());
+    assert!(!dir.join("img2.png").exists());
+    assert!(!dir.join("img2.txt").exists(), "label file deleted too");
+    assert_eq!(
+        h.state().images,
+        ["img1.png", "img3.png", "img10.png", "img11.png"]
+    );
+    assert!(!h.state().anns.contains_key("img2.png"));
+    assert_eq!(cur_name(&h), "img3.png", "moved to the next image");
+
+    // From the list menu, for an image before the current one.
+    h.get_by_label_contains("] img1.png").click_secondary();
+    h.step();
+    h.step();
+    h.get_by_label("Delete file…").click();
+    h.step();
+    h.step();
+    assert_eq!(h.state().confirm_delete.as_deref(), Some("img1.png"));
+    h.get_by_label("Delete").click();
+    h.step();
+    h.step();
+    assert!(!dir.join("img1.png").exists());
+    assert_eq!(h.state().images, ["img3.png", "img10.png", "img11.png"]);
+    assert_eq!(cur_name(&h), "img3.png", "current image kept");
+    assert_eq!(h.state().visible, [0, 1, 2]);
+    assert!(!h.state().anns.contains_key("img1.png"));
+}
+
+#[test]
 fn wheel_zoom_is_instant() {
     let dir = make_dataset(&temp_root("zoom"));
     let mut h = harness(&dir);

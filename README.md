@@ -50,6 +50,7 @@ cargo run --release
 | ↑ / ↓ (W / S) | previous / next class (wraps) |
 | 1–9 | select class |
 | Delete / Backspace / X | remove selected box |
+| Shift+Delete | delete the current image file and its label file from disk (asks first) |
 | Left drag | draw box (Shift: always draw, even on top of a box) |
 | Left click | select box; click again to cycle overlapping boxes |
 | Drag selected box | move; drag its edges or corners to resize |
@@ -61,7 +62,7 @@ cargo run --release
 | Ctrl+S | update the YOLO labels folder |
 | Ctrl+O | open image folder |
 
-In the image list, `*N` marks an image whose boxes were edited since the last import/export (N boxes). `[N]` marks a visited image with N boxes.
+In the image list, `*N` marks an image whose boxes were edited since the last import/export (N boxes). `[N]` marks a visited image with N boxes. Right-click an image for **Copy file name** and **Delete file…**, which after confirmation permanently deletes the image file and its label file in the labels folder, and drops the image's annotation data.
 
 ## Saving & backup
 
