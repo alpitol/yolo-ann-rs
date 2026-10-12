@@ -164,6 +164,40 @@ fn natural_order_navigation_and_class_hotkeys() {
 }
 
 #[test]
+fn arrows_change_class_of_selected_box() {
+    let dir = make_dataset(&temp_root("sel_class"));
+    let mut h = harness(&dir);
+    wait_loaded(&mut h);
+    let (a, b) = (norm_to_screen(&h, 0.2, 0.2), norm_to_screen(&h, 0.6, 0.6));
+    drag(&mut h, a, b);
+    assert_eq!(h.state().selected, Some(0));
+    assert_eq!(h.state().anns["img1.png"].boxes[0].class, 0);
+
+    h.key_press(Key::ArrowDown);
+    h.step();
+    assert_eq!(h.state().anns["img1.png"].boxes[0].class, 1);
+    assert_eq!(h.state().selected, Some(0), "box stays selected");
+    assert_eq!(h.state().cur_class, 0, "drawing class unchanged");
+    h.key_press(Key::ArrowUp);
+    h.step();
+    h.key_press(Key::W);
+    h.step();
+    assert_eq!(h.state().anns["img1.png"].boxes[0].class, 2, "up wraps");
+
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.step();
+    assert_eq!(h.state().anns["img1.png"].boxes[0].class, 0, "undoable");
+
+    // Without a selection the arrows change the drawing class again.
+    h.key_press(Key::Escape);
+    h.step();
+    h.key_press(Key::ArrowDown);
+    h.step();
+    assert_eq!(h.state().cur_class, 1);
+    assert_eq!(h.state().anns["img1.png"].boxes[0].class, 0);
+}
+
+#[test]
 fn prefetches_neighbours() {
     let dir = make_dataset(&temp_root("prefetch"));
     let mut h = harness(&dir);

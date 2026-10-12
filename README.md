@@ -47,7 +47,7 @@ cargo run --release
 | Key | Action |
 |---|---|
 | ← / → (A / D) | previous / next image (wraps) |
-| ↑ / ↓ (W / S) | previous / next class (wraps) |
+| ↑ / ↓ (W / S) | previous / next class (wraps); with a box selected, changes that box's class instead |
 | 1–9 | select class |
 | Delete / Backspace / X | remove selected box |
 | Shift+Delete | delete the current image file and its label file from disk (asks first) |

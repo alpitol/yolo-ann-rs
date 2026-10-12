@@ -457,6 +457,36 @@ impl App {
         self.selected = None;
     }
 
+    /// Cycle the class of the selected box (wraps). Ignored while it is being dragged,
+    /// since releasing the drag would write back the old class.
+    fn cycle_selected_class(&mut self, delta: isize) {
+        let n = self.classes.len() as isize;
+        if n == 0 || !matches!(self.drag, Drag::None) {
+            return;
+        }
+        let (Some(sel), Some(name)) = (self.selected, self.cur_name().map(String::from)) else {
+            return;
+        };
+        let Some(ann) = self.anns.get_mut(&name) else {
+            return;
+        };
+        let Some(b) = ann.boxes.get(sel) else {
+            return;
+        };
+        // An unknown class (past the list) steps onto the first or last class.
+        let base = match b.class as isize {
+            c if c < n => c,
+            _ if delta > 0 => -1,
+            _ => n,
+        };
+        let class = (base + delta).rem_euclid(n) as usize;
+        if class != b.class {
+            ann.snapshot();
+            ann.boxes[sel].class = class;
+            self.mark_changed();
+        }
+    }
+
     /// Recompute the visible list (search + data filter) without moving.
     fn compute_visible(&mut self) {
         let q = self.search.to_lowercase();
@@ -1230,7 +1260,11 @@ impl App {
         }
         let cls = down as isize - up as isize;
         if cls != 0 {
-            self.cycle_class(cls);
+            if self.selected.is_some() {
+                self.cycle_selected_class(cls);
+            } else {
+                self.cycle_class(cls);
+            }
         }
         if let Some(d) = digit
             && d <= self.classes.len()
@@ -1734,7 +1768,10 @@ impl App {
             .show(ui, |ui| {
                 for (k, v) in [
                     ("Left / Right (A / D)", "previous / next image"),
-                    ("Up / Down (W / S)", "previous / next class"),
+                    (
+                        "Up / Down (W / S)",
+                        "previous / next class (of selected box)",
+                    ),
                     ("1-9", "select class"),
                     ("Delete / Backspace / X", "remove selected box"),
                     ("Left drag", "draw box (Shift: always draw)"),
