@@ -85,7 +85,8 @@ enum Drag {
 struct CropJob {
     done: Arc<AtomicUsize>,
     total: Arc<AtomicUsize>,
-    finished: Arc<Mutex<Option<String>>>,
+    /// Result message and whether there were errors.
+    finished: Arc<Mutex<Option<(String, bool)>>>,
 }
 
 /// An action that replaces all annotation data.
@@ -295,7 +296,7 @@ impl App {
         let images = match model::scan_images(dir) {
             Ok(v) => v,
             Err(e) => {
-                self.set_status(format!("{e:#}"));
+                self.set_warning(format!("{e:#}"));
                 return;
             }
         };
@@ -337,12 +338,9 @@ impl App {
         self.settings.last_image = None;
         self.settings.save();
 
-        let mut status = String::new();
+        self.set_status("");
         match labels_dir {
-            Some(ld) => {
-                self.import_yolo(&ld, false);
-                status = std::mem::take(&mut self.status);
-            }
+            Some(ld) => self.import_yolo(&ld, false),
             None => {
                 let next_to_images = model::read_yolo_dir(dir, &self.images, &self.class_ids)
                     .is_ok_and(|(found, _)| !found.is_empty());
@@ -353,11 +351,10 @@ impl App {
                 };
                 if let Some(ld) = auto {
                     self.import_yolo(&ld, true);
-                    status = format!("Autoselected labels: {}", self.status);
+                    self.status = format!("Autoselected labels: {}", self.status);
                 }
             }
         }
-        self.set_status(status);
         self.compute_visible();
         if !self.images.is_empty() {
             self.go_to(0, false);
@@ -390,7 +387,7 @@ impl App {
                 self.settings.last_classes_file = Some(path.to_path_buf());
                 self.settings.save();
             }
-            Err(e) => self.set_status(format!("{e:#}")),
+            Err(e) => self.set_warning(format!("{e:#}")),
         }
     }
 
@@ -483,7 +480,7 @@ impl App {
             let p = model::label_path(ld, &name);
             let empty = std::fs::read_to_string(&p).is_ok_and(|s| s.trim().is_empty());
             if empty && let Err(e) = std::fs::remove_file(&p) {
-                self.set_status(format!("Could not remove {}: {e}", p.display()));
+                self.set_warning(format!("Could not remove {}: {e}", p.display()));
                 return;
             }
         }
@@ -519,10 +516,11 @@ impl App {
             return;
         };
         if let Err(e) = std::fs::remove_file(&path) {
-            self.set_status(format!("Could not delete {}: {e}", path.display()));
+            self.set_warning(format!("Could not delete {}: {e}", path.display()));
             return;
         }
         let mut status = format!("Deleted {}", path.display());
+        let mut label_failed = false;
         if let Some(lp) = self
             .labels_dir
             .as_ref()
@@ -531,7 +529,10 @@ impl App {
         {
             match std::fs::remove_file(&lp) {
                 Ok(()) => status.push_str(" and its label file"),
-                Err(e) => status.push_str(&format!("; could not delete {}: {e}", lp.display())),
+                Err(e) => {
+                    label_failed = true;
+                    status.push_str(&format!("; could not delete {}: {e}", lp.display()));
+                }
             }
         }
         self.images.remove(idx);
@@ -563,7 +564,11 @@ impl App {
         }
         self.update_prefetch();
         self.write_backup(true);
-        self.set_status(status);
+        if label_failed {
+            self.set_warning(status);
+        } else {
+            self.set_status(status);
+        }
     }
 
     /// After the search text or the data filter changed: jump to the first
@@ -726,7 +731,7 @@ impl App {
                 true
             }
             Err(e) => {
-                self.set_status(format!("Save failed: {e:#}"));
+                self.set_warning(format!("Save failed: {e:#}"));
                 false
             }
         }
@@ -821,17 +826,18 @@ impl App {
                 self.backup_written_gen = self.backup_gen;
                 self.backup_saved_at = Some(b.saved_at);
             }
-            Err(e) => self.set_status(format!("Backup failed: {e:#}")),
+            Err(e) => self.set_warning(format!("Backup failed: {e:#}")),
         }
         self.backup_last_write = Instant::now();
     }
 
     fn restore_backup(&mut self, b: Backup) {
+        let classes_differ = !self.classes.is_empty() && self.classes != b.classes;
         if self.classes.is_empty() {
             self.classes = b.classes.clone();
             self.class_ids = b.class_ids.clone();
-        } else if self.classes != b.classes {
-            self.set_status(
+        } else if classes_differ {
+            self.set_warning(
                 "Warning: backup class list differs from loaded classes; class indices kept as-is",
             );
         }
@@ -850,7 +856,7 @@ impl App {
         self.mark_changed();
         self.compute_visible();
         self.update_prefetch();
-        if !self.status.starts_with("Warning") {
+        if !classes_differ {
             self.set_status(format!("Restored annotations of {n} images from backup"));
         }
     }
@@ -859,7 +865,7 @@ impl App {
     /// contents of a COCO file.
     fn import_coco(&mut self, path: &Path) {
         let Some(dir) = self.image_dir.clone() else {
-            self.set_status("Open an image folder before importing COCO");
+            self.set_warning("Open an image folder before importing COCO");
             return;
         };
         let known: HashSet<&str> = self.images.iter().map(String::as_str).collect();
@@ -901,9 +907,13 @@ impl App {
                 if imp.skipped_unknown_image > 0 {
                     s += &format!("; {} images not in folder", imp.skipped_unknown_image);
                 }
-                self.set_status(s);
+                if imp.skipped_unknown_class > 0 || imp.skipped_unknown_image > 0 {
+                    self.set_warning(s);
+                } else {
+                    self.set_status(s);
+                }
             }
-            Err(e) => self.set_status(format!("COCO import failed: {e:#}")),
+            Err(e) => self.set_warning(format!("COCO import failed: {e:#}")),
         }
     }
 
@@ -929,7 +939,7 @@ impl App {
         let mut entries = Vec::with_capacity(self.anns.len());
         for name in self.images.iter().filter(|n| self.anns.contains_key(*n)) {
             let Some([w, h]) = self.image_size(name) else {
-                self.set_status(format!("Could not read size of {name}"));
+                self.set_warning(format!("Could not read size of {name}"));
                 return;
             };
             entries.push((name.clone(), w, h, self.anns[name].boxes.clone()));
@@ -945,7 +955,7 @@ impl App {
                     path.display()
                 ));
             }
-            Err(e) => self.set_status(format!("COCO export failed: {e:#}")),
+            Err(e) => self.set_warning(format!("COCO export failed: {e:#}")),
         }
     }
 
@@ -962,7 +972,7 @@ impl App {
         let (found, errors) = match model::read_yolo_dir(dir, &self.images, &self.class_ids) {
             Ok(v) => v,
             Err(e) => {
-                self.set_status(format!("YOLO import failed: {e:#}"));
+                self.set_warning(format!("YOLO import failed: {e:#}"));
                 return;
             }
         };
@@ -999,8 +1009,10 @@ impl App {
         let mut s = format!("Imported {nb} boxes for {n} images from {}", dir.display());
         if errors > 0 {
             s += &format!(" ({errors} unreadable files)");
+            self.set_warning(s);
+        } else {
+            self.set_status(s);
         }
-        self.set_status(s);
     }
 
     /// Write every image with annotation data to `dir`, which becomes the labels folder.
@@ -1020,7 +1032,7 @@ impl App {
                 }
                 Err(e) => {
                     failed += 1;
-                    self.set_status(format!("Save failed: {e:#}"));
+                    self.set_warning(format!("Save failed: {e:#}"));
                 }
             }
         }
@@ -1141,10 +1153,11 @@ impl App {
                 }
                 d.fetch_add(1, Ordering::Relaxed);
             }
-            *f.lock().unwrap() = Some(format!(
+            let msg = format!(
                 "Saved {crops} crops to {} ({errors} errors)",
                 out_dir.display()
-            ));
+            );
+            *f.lock().unwrap() = Some((msg, errors > 0));
         });
         self.crop_job = Some(CropJob {
             done,
@@ -2216,8 +2229,12 @@ impl App {
             );
             let finished = job.finished.lock().unwrap().take();
             match finished {
-                Some(msg) => {
-                    self.set_status(msg);
+                Some((msg, errors)) => {
+                    if errors {
+                        self.set_warning(msg);
+                    } else {
+                        self.set_status(msg);
+                    }
                     self.crop_job = None;
                 }
                 None => ui.ctx().request_repaint_after(Duration::from_millis(100)),

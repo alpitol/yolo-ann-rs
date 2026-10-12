@@ -772,3 +772,16 @@ fn f11_toggles_fullscreen() {
     });
     assert!(full, "F11 should request full screen");
 }
+
+#[test]
+fn failures_are_warnings() {
+    let root = temp_root("warnings");
+    let dir = make_dataset(&root);
+    let mut h = harness(&dir);
+    wait_loaded(&mut h);
+    assert!(!h.state().status_warn);
+    h.state_mut().import_coco(&root.join("missing.json"));
+    assert!(h.state().status_warn, "{}", h.state().status);
+    h.state_mut().set_status("ok");
+    assert!(!h.state().status_warn);
+}
