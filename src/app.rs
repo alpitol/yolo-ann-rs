@@ -380,6 +380,14 @@ impl App {
                     c.len(),
                     path.display()
                 ));
+                // Boxes already loaded keep their label file ids under the new mapping.
+                if ids != self.class_ids && !self.anns.is_empty() {
+                    let old = std::mem::take(&mut self.class_ids);
+                    for ann in self.anns.values_mut() {
+                        ann.remap_classes(|c| ids.to_index(old.to_id(c)));
+                    }
+                    self.mark_changed();
+                }
                 self.classes = c;
                 self.class_ids = ids;
                 self.cur_class = 0;

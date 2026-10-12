@@ -581,6 +581,57 @@ fn metadata_class_ids_roundtrip() {
     assert!(!out.join("classes.txt").exists());
 }
 
+/// Loading a `<id> <name>` class file after labels were read (as plain 0-based ids)
+/// remaps the loaded boxes so the file ids keep their meaning.
+#[test]
+fn loading_class_ids_remaps_loaded_labels() {
+    let root = temp_root("metadata_late");
+    let dir = make_dataset(&root);
+    std::fs::remove_file(dir.join("classes.txt")).unwrap();
+    std::fs::write(
+        dir.join("img1.txt"),
+        "3 0.5 0.5 0.2 0.2\n1 0.2 0.2 0.1 0.1\n",
+    )
+    .unwrap();
+    let meta = root.join("meta.txt");
+    std::fs::write(&meta, "1 motor_boat\n2 sailing_boat\n3 ship\n").unwrap();
+
+    let mut h = harness(&dir);
+    wait_loaded(&mut h);
+    let classes = |h: &Harness<'static, App>, name: &str| -> Vec<usize> {
+        h.state().anns[name].boxes.iter().map(|b| b.class).collect()
+    };
+    assert_eq!(classes(&h, "img1.png"), [3, 1]);
+    {
+        let ann = h.state_mut().anns.get_mut("img1.png").unwrap();
+        ann.snapshot();
+        ann.boxes.pop();
+    }
+
+    h.state_mut().load_classes(&meta);
+    assert_eq!(classes(&h, "img1.png"), [2], "file id 3 is ship");
+    assert_eq!(classes(&h, "img2.png"), [0], "file id 1 is motor_boat");
+    let ann = &h.state().anns["img1.png"];
+    assert!(ann.modified(), "exported state remapped along with boxes");
+    assert_eq!(
+        ann.undo[0].iter().map(|b| b.class).collect::<Vec<_>>(),
+        [2, 0]
+    );
+
+    h.state_mut().anns.get_mut("img2.png").unwrap().dirty = true;
+    h.state_mut().save_yolo();
+    assert_eq!(
+        std::fs::read_to_string(dir.join("img1.txt")).unwrap(),
+        "3 0.500000 0.500000 0.200000 0.200000\n"
+    );
+    assert!(
+        std::fs::read_to_string(dir.join("img2.txt"))
+            .unwrap()
+            .starts_with("1 "),
+        "ids unchanged on disk"
+    );
+}
+
 fn untrack_via_menu(h: &mut Harness<'static, App>, name: &str) -> bool {
     h.get_by_label_contains(&format!("] {name}"))
         .click_secondary();

@@ -103,6 +103,18 @@ impl ImageAnn {
         self.dirty = true;
     }
 
+    /// Change the class index of every box, including undo/redo history and the
+    /// last exported state, so `modified()` and undo stay consistent.
+    pub fn remap_classes(&mut self, f: impl Fn(usize) -> usize) {
+        let lists = std::iter::once(&mut self.boxes)
+            .chain(std::iter::once(&mut self.exported))
+            .chain(self.undo.iter_mut())
+            .chain(self.redo.iter_mut());
+        for b in lists.flatten() {
+            b.class = f(b.class);
+        }
+    }
+
     pub fn undo(&mut self) -> bool {
         match self.undo.pop() {
             Some(prev) => {

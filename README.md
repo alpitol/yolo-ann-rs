@@ -77,7 +77,7 @@ Labels come only from what you import, from `.txt` files next to the images, or 
   2 sailing_boat
   3 ship
   ```
-  gives each class its id explicitly (here 1-based). Label files are read and written with those ids, so the dataset keeps its numbering. Ids not listed are kept unchanged. Exports to a folder without a class file get a `metadata.txt` instead of `classes.txt`. COCO export still uses category id = class index + 1.
+  gives each class its id explicitly (here 1-based). Label files are read and written with those ids, so the dataset keeps its numbering. Ids not listed are kept unchanged. Loading such a file after the labels were already read keeps the ids the boxes had in their label files. Exports to a folder without a class file get a `metadata.txt` instead of `classes.txt`. COCO export still uses category id = class index + 1.
 - **Import YOLO bboxes** loads `<stem>.txt` files from a folder. The first imported folder becomes the *labels folder*. Folders imported on top of it are unsaved edits.
 - **Export YOLO** has two modes:
   - *Update labels folder* (Ctrl+S) writes only the changed files.
