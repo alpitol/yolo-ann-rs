@@ -22,6 +22,7 @@ pub struct Config {
     pub behind: usize,
     pub workers: usize,
     pub autosave: Option<bool>,
+    pub filter_data: Option<bool>,
 }
 
 const PALETTE: [Color32; 10] = [
@@ -139,7 +140,8 @@ pub struct App {
     images: Vec<String>,
     visible: Vec<usize>,
     search: String,
-    /// Show only images that have annotation data (an entry in `anns`).
+    /// Show only images that have annotation data (an entry in `anns`). Follows
+    /// `settings.filter_data`, but is off in a folder without annotation data.
     filter_data: bool,
     /// Don't draw boxes; box editing is disabled meanwhile.
     hide_anns: bool,
@@ -191,6 +193,10 @@ impl App {
         if let Some(a) = cfg.autosave {
             settings.autosave_labels = a;
         }
+        if let Some(f) = cfg.filter_data {
+            settings.filter_data = f;
+        }
+        let filter_data = settings.filter_data;
         let mut app = App {
             last_img_rect: None,
             ahead: cfg.ahead,
@@ -203,7 +209,7 @@ impl App {
             images: Vec::new(),
             visible: Vec::new(),
             search: String::new(),
-            filter_data: false,
+            filter_data,
             hide_anns: false,
             cur: None,
             cur_untracked: false,
@@ -262,6 +268,7 @@ impl App {
             if from_settings
                 && let Some(name) = app.settings.last_image.clone()
                 && let Some(i) = app.images.iter().position(|n| *n == name)
+                && app.visible.contains(&i)
             {
                 app.go_to(i, false);
             }
@@ -388,9 +395,11 @@ impl App {
                 }
             }
         }
+        // An empty filtered list would leave nothing to browse.
+        self.filter_data = self.settings.filter_data && !self.anns.is_empty();
         self.compute_visible();
-        if !self.images.is_empty() {
-            self.go_to(0, false);
+        if let Some(&first) = self.visible.first() {
+            self.go_to(first, false);
         }
     }
 
@@ -1737,6 +1746,8 @@ impl App {
             )
             .changed()
         {
+            self.settings.filter_data = self.filter_data;
+            self.settings.save();
             self.apply_filters();
         }
         if ui

@@ -40,6 +40,10 @@ fn make_dataset(root: &Path) -> PathBuf {
 }
 
 fn harness(dir: &Path) -> Harness<'static, App> {
+    harness_filtered(dir, false)
+}
+
+fn harness_filtered(dir: &Path, filter_data: bool) -> Harness<'static, App> {
     let cfg = Config {
         image_dir: Some(dir.to_path_buf()),
         labels_dir: None,
@@ -49,6 +53,7 @@ fn harness(dir: &Path) -> Harness<'static, App> {
         behind: 1,
         workers: 2,
         autosave: Some(false),
+        filter_data: Some(filter_data),
     };
     Harness::builder()
         .with_size([1200.0, 800.0])
@@ -996,4 +1001,25 @@ fn side_panel_scrolls_when_too_short() {
     h.run_ok();
     let bottom = h.get_by_label("Shortcuts").rect();
     assert!(bottom.bottom() <= 300.0, "{bottom:?}");
+}
+
+#[test]
+fn data_filter_on_unless_folder_has_no_data() {
+    let root = temp_root("filter_default");
+    let dir = make_dataset(&root);
+    let mut h = harness_filtered(&dir, true);
+    wait_loaded(&mut h);
+    assert!(h.state().filter_data);
+    assert_eq!(visible_names(&h), ["img2.png"]);
+    assert_eq!(cur_name(&h), "img2.png", "starts at the first shown image");
+
+    // A folder without annotation data shows all images, keeping the preference.
+    let empty = make_dataset(&root.join("empty"));
+    std::fs::remove_file(empty.join("img2.txt")).unwrap();
+    h.state_mut().open_dir(&empty, None, None);
+    wait_loaded(&mut h);
+    assert!(!h.state().filter_data);
+    assert!(h.state().settings.filter_data);
+    assert_eq!(visible_names(&h).len(), 5);
+    assert_eq!(cur_name(&h), "img1.png");
 }

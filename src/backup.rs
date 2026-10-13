@@ -90,7 +90,7 @@ pub fn write_backup(path: &Path, backup: &Backup, first_write: bool) -> Result<(
     write_atomic(path, serde_json::to_string(backup)?.as_bytes())
 }
 
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Settings {
     pub last_image_dir: Option<PathBuf>,
     pub last_labels_dir: Option<PathBuf>,
@@ -100,6 +100,27 @@ pub struct Settings {
     /// Last folder used in each kind of file dialog ("yolo", "classes", "coco", "crops").
     #[serde(default)]
     pub dialog_dirs: std::collections::BTreeMap<String, PathBuf>,
+    /// "Filter to annotation data" preference.
+    #[serde(default = "default_true")]
+    pub filter_data: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            last_image_dir: None,
+            last_labels_dir: None,
+            last_classes_file: None,
+            last_image: None,
+            autosave_labels: false,
+            dialog_dirs: Default::default(),
+            filter_data: true,
+        }
+    }
 }
 
 fn settings_path() -> PathBuf {
@@ -143,6 +164,7 @@ mod tests {
                 "last_image":"a.jpg","autosave_labels":true}"#,
         )
         .unwrap();
-        assert!(s.autosave_labels && s.dialog_dirs.is_empty());
+        assert!(s.autosave_labels && s.dialog_dirs.is_empty() && s.filter_data);
+        assert!(Settings::default().filter_data);
     }
 }

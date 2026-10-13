@@ -37,6 +37,9 @@ struct Args {
     /// Write label files automatically when leaving an image.
     #[arg(long)]
     autosave: Option<bool>,
+    /// Show only images with annotation data (`true`/`false`; default: last setting, initially true).
+    #[arg(long)]
+    filter_data: Option<bool>,
     /// Print the license of yolo-ann and of the third-party software it includes, then exit.
     #[arg(long)]
     license: bool,
@@ -94,6 +97,7 @@ fn main() -> eframe::Result {
         behind: args.behind,
         workers,
         autosave: args.autosave,
+        filter_data: args.filter_data,
     };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
