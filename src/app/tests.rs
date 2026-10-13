@@ -198,6 +198,26 @@ fn arrows_change_class_of_selected_box() {
 }
 
 #[test]
+fn ctrl_c_copies_image_file() {
+    let dir = make_dataset(&temp_root("copy_file"));
+    let mut h = harness(&dir);
+    wait_loaded(&mut h);
+    h.key_press(Key::ArrowRight);
+    h.step();
+    h.key_press_modifiers(Modifiers::COMMAND, Key::C);
+    h.step();
+    let expected = std::path::absolute(dir.join("img2.png")).unwrap();
+    assert_eq!(h.state().clipboard.copied, [expected]);
+    assert!(!h.state().status_warn, "{}", h.state().status);
+
+    // The real backend sends Event::Copy instead of a key press.
+    h.state_mut().clipboard.copied.clear();
+    h.event(egui::Event::Copy);
+    h.step();
+    assert_eq!(h.state().clipboard.copied.len(), 1);
+}
+
+#[test]
 fn prefetches_neighbours() {
     let dir = make_dataset(&temp_root("prefetch"));
     let mut h = harness(&dir);

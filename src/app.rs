@@ -89,6 +89,34 @@ struct CropJob {
     finished: Arc<Mutex<Option<(String, bool)>>>,
 }
 
+/// Puts files on the system clipboard the way a file manager's copy does
+/// (`text/uri-list` on Linux, `CF_HDROP` on Windows, file URLs on macOS).
+#[derive(Default)]
+struct FileClipboard {
+    #[cfg(not(test))]
+    inner: Option<arboard::Clipboard>,
+    /// Tests record copies instead of overwriting the real clipboard.
+    #[cfg(test)]
+    copied: Vec<PathBuf>,
+}
+
+impl FileClipboard {
+    #[cfg(not(test))]
+    fn set_files(&mut self, files: &[PathBuf]) -> Result<(), String> {
+        if self.inner.is_none() {
+            self.inner = Some(arboard::Clipboard::new().map_err(|e| e.to_string())?);
+        }
+        let cb = self.inner.as_mut().unwrap();
+        cb.set().file_list(files).map_err(|e| e.to_string())
+    }
+
+    #[cfg(test)]
+    fn set_files(&mut self, files: &[PathBuf]) -> Result<(), String> {
+        self.copied = files.to_vec();
+        Ok(())
+    }
+}
+
 /// An action that replaces all annotation data.
 enum Discard {
     OpenDir(PathBuf),
@@ -152,6 +180,7 @@ pub struct App {
     confirm_discard: Option<Discard>,
     allow_close: bool,
     crop_job: Option<CropJob>,
+    clipboard: FileClipboard,
 }
 
 impl App {
@@ -203,6 +232,7 @@ impl App {
             confirm_discard: None,
             allow_close: false,
             crop_job: None,
+            clipboard: FileClipboard::default(),
         };
 
         let dir = cfg
@@ -1220,6 +1250,15 @@ impl App {
         {
             return;
         }
+        // egui-winit turns Ctrl+C into Event::Copy. It is left in place so that a label
+        // text selection still gets copied as text (that copy is applied after ours).
+        let copy = ctx.input_mut(|i| {
+            i.events.iter().any(|e| matches!(e, egui::Event::Copy))
+                || i.consume_key(Modifiers::COMMAND, Key::C)
+        });
+        if copy {
+            self.copy_image_file();
+        }
         // Extra Shift is ignored by plain key matching, so Shift+Delete goes first.
         let del_image = ctx.input_mut(|i| i.consume_key(Modifiers::SHIFT, Key::Delete));
         let (right, left, up, down, del, esc, undo, redo, save, open, fit, digit) =
@@ -1304,6 +1343,18 @@ impl App {
         if fit {
             self.zoom = 1.0;
             self.pan = Vec2::ZERO;
+        }
+    }
+
+    /// Copy the current image file to the clipboard so it can be pasted in a file manager.
+    fn copy_image_file(&mut self) {
+        let Some(path) = self.cur.and_then(|i| self.image_path(i)) else {
+            return;
+        };
+        let path = std::path::absolute(&path).unwrap_or(path);
+        match self.clipboard.set_files(std::slice::from_ref(&path)) {
+            Ok(()) => self.set_status(format!("Copied {} to the clipboard", path.display())),
+            Err(e) => self.set_warning(format!("Copying the image file failed: {e}")),
         }
     }
 
@@ -1783,6 +1834,7 @@ impl App {
                     ("F11", "toggle full screen"),
                     ("Esc", "deselect / cancel"),
                     ("Ctrl+Z / Ctrl+Y", "undo / redo (per image)"),
+                    ("Ctrl+C", "copy image file (paste in a file manager)"),
                     ("Ctrl+S", "update YOLO labels folder"),
                     ("Ctrl+O", "open image folder"),
                 ] {

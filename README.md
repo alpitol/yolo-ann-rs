@@ -60,6 +60,7 @@ cargo run --release
 | F11 | toggle full screen (hides the window title bar) |
 | Esc | deselect / cancel drag |
 | Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z | undo / redo (per image) |
+| Ctrl+C | copy the current image file to the clipboard, as a file manager does, so it can be pasted into a file manager, chat or upload dialog |
 | Ctrl+S | update the YOLO labels folder |
 | Ctrl+O | open image folder |
 
