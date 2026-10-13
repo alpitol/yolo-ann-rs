@@ -29,7 +29,7 @@ struct Args {
     #[arg(long, default_value_t = 6)]
     ahead: usize,
     /// Number of images to keep/prefetch behind.
-    #[arg(long, default_value_t = 2)]
+    #[arg(long, default_value_t = 6)]
     behind: usize,
     /// Decoder threads (default: half the CPUs, 2..=6).
     #[arg(long)]

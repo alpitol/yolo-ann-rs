@@ -37,7 +37,7 @@ cargo run --release
 | `-l, --labels DIR` | Import YOLO labels from this folder (also the save target). Default: the image folder, if it contains label files, else the YOLO layout's `labels` folder: the image folder path with its last `images` component replaced by `labels` (`ds/images/train` → `ds/labels/train`), if it exists. Shown as *autoselected* |
 | `-c, --classes FILE` | Class names: one per line, `<id> <name>` per line (a `metadata.txt`, see below), or an Ultralytics `data.yaml` (`names` as a list or an `{index: name}` map). Auto-detected: `classes.txt`, `obj.names`, `metadata.txt`, `*.names`, `data.yaml`, `dataset.yaml` in the image folder or the imported labels folder, or in their parent if the folder is named `images` or `labels`. Opening another folder never keeps the previous folder's classes. On restart, the class file of the reopened last folder is reloaded |
 | `--coco FILE` | Import a COCO json on startup. Its categories, sorted by id, replace the class list (see **Import COCO**) |
-| `--ahead N` / `--behind N` | Prefetch window (default 6 / 2) |
+| `--ahead N` / `--behind N` | Prefetch window (default 6 / 6) |
 | `--workers N` | Decoder threads |
 | `--autosave true` | Write the label file automatically when leaving an image |
 | `--license` | Print the license of yolo-ann and of the third-party software it includes |

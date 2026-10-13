@@ -664,11 +664,14 @@ impl App {
             return vec![cur];
         };
         let mut out = vec![cur];
-        for d in 1..=self.ahead.min(n) {
-            out.push(self.visible[(pos + d) % n]);
-        }
-        for d in 1..=self.behind.min(n) {
-            out.push(self.visible[(pos + n - d % n) % n]);
+        // Interleave directions so the nearest neighbours on both sides decode first.
+        for d in 1..=self.ahead.max(self.behind).min(n) {
+            if d <= self.ahead {
+                out.push(self.visible[(pos + d) % n]);
+            }
+            if d <= self.behind {
+                out.push(self.visible[(pos + n - d % n) % n]);
+            }
         }
         let mut seen = HashSet::new();
         out.retain(|i| seen.insert(*i));
