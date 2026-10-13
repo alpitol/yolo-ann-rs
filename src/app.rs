@@ -1828,7 +1828,7 @@ impl App {
                     ("Left drag", "draw box (Shift: always draw)"),
                     ("Left click", "select box (click again to cycle overlaps)"),
                     ("Drag selected", "move; drag edges/corners to resize"),
-                    ("Mouse wheel", "zoom"),
+                    ("Mouse wheel", "zoom (in at cursor, out towards center)"),
                     ("Middle / right drag", "pan"),
                     ("F / Home", "reset zoom"),
                     ("F11", "toggle full screen"),
@@ -1981,7 +1981,7 @@ impl App {
         let img_px = vec2(size[0] as f32, size[1] as f32);
         let fit = (rect.width() / img_px.x).min(rect.height() / img_px.y);
 
-        // Zoom around the cursor.
+        // Zoom in around the cursor; zoom out towards the centered, fitted image.
         if let Some(p) = resp.hover_pos() {
             // Raw wheel/pinch events instead of egui's smoothed deltas: zoom is instant.
             let line = ui.ctx().options(|o| o.input_options.line_scroll_speed);
@@ -2004,14 +2004,24 @@ impl App {
                 }
                 f
             });
-            if factor != 1.0 {
-                let s = fit * self.zoom;
+            let (z, z2) = (self.zoom, (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM));
+            if z2 > z {
+                let s = fit * z;
                 let min = rect.center() + self.pan - img_px * s / 2.0;
                 let u = (p - min) / s;
-                self.zoom = (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
-                let s2 = fit * self.zoom;
+                let s2 = fit * z2;
                 self.pan = p.to_vec2() - u * s2 - rect.center().to_vec2() + img_px * s2 / 2.0;
+            } else if z2 < z {
+                // Scaling the pan by (zoom - 1) is zooming around the one point that
+                // brings the image exactly centered at 100%. Below 100% the offset
+                // shrinks with the zoom.
+                self.pan *= if z > 1.0 {
+                    (z2 - 1.0).max(0.0) / (z - 1.0)
+                } else {
+                    z2 / z
+                };
             }
+            self.zoom = z2;
         }
         if resp.dragged_by(PointerButton::Middle) || resp.dragged_by(PointerButton::Secondary) {
             self.pan += resp.drag_delta();

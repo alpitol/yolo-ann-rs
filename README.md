@@ -54,7 +54,7 @@ cargo run --release
 | Left drag | draw box (Shift: always draw, even on top of a box) |
 | Left click | select box; click again to cycle overlapping boxes |
 | Drag selected box | move; drag its edges or corners to resize |
-| Mouse wheel | zoom at cursor |
+| Mouse wheel | zoom in at the cursor; zoom out moves the image back towards the center, so it is centered again at 100% |
 | Middle / right drag | pan |
 | F / Home | reset zoom |
 | F11 | toggle full screen (hides the window title bar) |

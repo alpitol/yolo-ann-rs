@@ -858,6 +858,56 @@ fn wheel_zoom_is_instant() {
 }
 
 #[test]
+fn zoom_in_at_cursor_zoom_out_recenters() {
+    let dir = make_dataset(&temp_root("zoom_out"));
+    let mut h = harness(&dir);
+    wait_loaded(&mut h);
+    let fitted = h.state().last_img_rect.unwrap();
+    let wheel = |h: &mut Harness<'static, App>, dy: f32| {
+        h.event(Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, dy),
+            phase: egui::TouchPhase::Move,
+            modifiers: Modifiers::NONE,
+        });
+        h.step();
+    };
+
+    // Zooming in keeps the image point under the cursor in place.
+    let p = norm_to_screen(&h, 0.2, 0.3);
+    h.hover_at(p);
+    h.step();
+    wheel(&mut h, 1.0);
+    let z1 = h.state().zoom;
+    assert!(z1 > 1.5, "{z1}");
+    let q = norm_to_screen(&h, 0.2, 0.3);
+    assert!((q - p).length() < 1.0, "{p:?} -> {q:?}");
+
+    // Zooming out elsewhere heads back to the centered image instead.
+    let pan1 = h.state().pan;
+    assert!(pan1.length() > 10.0, "{pan1:?}");
+    h.hover_at(fitted.right_bottom() - egui::vec2(5.0, 5.0));
+    h.step();
+    wheel(&mut h, -0.5);
+    let z2 = h.state().zoom;
+    assert!(z2 > 1.0 && z2 < z1, "{z2}");
+    let want = pan1 * ((z2 - 1.0) / (z1 - 1.0));
+    assert!(
+        (h.state().pan - want).length() < 1e-2,
+        "{:?} vs {want:?}",
+        h.state().pan
+    );
+    wheel(&mut h, -5.0);
+    assert!(h.state().zoom < 1.0);
+    assert_eq!(h.state().pan, egui::Vec2::ZERO);
+    let r = h.state().last_img_rect.unwrap();
+    assert!(
+        (r.center() - fitted.center()).length() < 0.5,
+        "{r:?} vs {fitted:?}"
+    );
+}
+
+#[test]
 fn f11_toggles_fullscreen() {
     let dir = make_dataset(&temp_root("fullscreen"));
     let mut h = harness(&dir);
