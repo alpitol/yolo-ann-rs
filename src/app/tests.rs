@@ -899,7 +899,7 @@ fn zoom_in_at_cursor_zoom_out_recenters() {
         h.state().pan
     );
     wheel(&mut h, -5.0);
-    assert!(h.state().zoom < 1.0);
+    assert_eq!(h.state().zoom, 1.0, "can't zoom out past 100%");
     assert_eq!(h.state().pan, egui::Vec2::ZERO);
     let r = h.state().last_img_rect.unwrap();
     assert!(

@@ -43,7 +43,7 @@ fn class_color(c: usize) -> Color32 {
 
 const MIN_BOX_SCREEN_PX: f32 = 4.0;
 const BACKUP_DEBOUNCE: Duration = Duration::from_secs(2);
-const MIN_ZOOM: f32 = 0.1;
+const MIN_ZOOM: f32 = 1.0;
 const MAX_ZOOM: f32 = 40.0;
 
 enum Slot {
@@ -2016,13 +2016,8 @@ impl App {
                 self.pan = p.to_vec2() - u * s2 - rect.center().to_vec2() + img_px * s2 / 2.0;
             } else if z2 < z {
                 // Scaling the pan by (zoom - 1) is zooming around the one point that
-                // brings the image exactly centered at 100%. Below 100% the offset
-                // shrinks with the zoom.
-                self.pan *= if z > 1.0 {
-                    (z2 - 1.0).max(0.0) / (z - 1.0)
-                } else {
-                    z2 / z
-                };
+                // brings the image exactly centered at 100% (the minimum zoom).
+                self.pan *= (z2 - 1.0).max(0.0) / (z - 1.0);
             }
             self.zoom = z2;
         }
