@@ -799,7 +799,8 @@ fn delete_image_file() {
     h.key_press_modifiers(Modifiers::SHIFT, Key::Delete);
     h.step();
     h.step();
-    h.get_by_label("Delete").click();
+    assert_eq!(h.state().confirm_delete.as_deref(), Some("img2.png"));
+    h.key_press(Key::Enter); // confirms like the Delete button
     h.step();
     h.step();
     assert!(h.state().confirm_delete.is_none());

@@ -50,7 +50,7 @@ cargo run --release
 | ↑ / ↓ (W / S) | previous / next class (wraps); with a box selected, changes that box's class instead |
 | 1–9 | select class |
 | Delete / Backspace / X | remove selected box |
-| Shift+Delete | delete the current image file and its label file from disk (asks first) |
+| Shift+Delete | delete the current image file and its label file from disk (asks first; Enter confirms, Escape cancels) |
 | Left drag | draw box (Shift: always draw, even on top of a box) |
 | Left click | select box; click again to cycle overlapping boxes |
 | Drag selected box | move; drag its edges or corners to resize |

@@ -2422,8 +2422,13 @@ impl App {
                 let del = egui::Button::new(RichText::new("Delete").color(Color32::WHITE))
                     .fill(Color32::from_rgb(160, 40, 40));
                 confirm = ui.add(del).clicked();
-                if ui.button("Cancel").clicked() {
+                let cancel = ui.button("Cancel");
+                if cancel.clicked() {
                     self.confirm_delete = None;
+                } else if !cancel.has_focus()
+                    && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter))
+                {
+                    confirm = true;
                 }
             });
         });
