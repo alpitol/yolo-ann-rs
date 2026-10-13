@@ -2221,21 +2221,37 @@ impl App {
         // ---- draw boxes
         let preview = self.drag_preview();
         let font = FontId::proportional(13.0);
-        for (i, b) in boxes.iter().enumerate() {
-            let (b, selected) = match preview {
-                Some((Some(pi), pb)) if pi == i => (pb, true),
-                _ => (*b, self.selected == Some(i)),
-            };
-            self.paint_box(
-                &painter,
-                to_screen(&b.normalized()),
-                b.class,
-                selected,
-                &font,
-            );
-        }
+        let mut drawn: Vec<(Rect, usize, bool)> = boxes
+            .iter()
+            .enumerate()
+            .map(|(i, b)| {
+                let (b, selected) = match preview {
+                    Some((Some(pi), pb)) if pi == i => (pb, true),
+                    _ => (*b, self.selected == Some(i)),
+                };
+                (to_screen(&b.normalized()), b.class, selected)
+            })
+            .collect();
         if let Some((None, b)) = preview {
-            self.paint_box(&painter, to_screen(&b), b.class, true, &font);
+            drawn.push((to_screen(&b), b.class, true));
+        }
+        for &(r, class, selected) in &drawn {
+            let fill_a = if selected { 70 } else { 28 };
+            painter.rect_filled(r, 0.0, class_color(class).gamma_multiply_u8(fill_a));
+        }
+        // Every pairwise intersection gets an extra fill, so overlapping boxes stand
+        // out and the fill deepens with the number of stacked boxes.
+        for (i, &(a, ca, _)) in drawn.iter().enumerate() {
+            for &(b, cb, _) in &drawn[i + 1..] {
+                let r = a.intersect(b);
+                if r.is_positive() {
+                    let color = class_color(ca).lerp_to_gamma(class_color(cb), 0.5);
+                    painter.rect_filled(r, 0.0, color.gamma_multiply_u8(45));
+                }
+            }
+        }
+        for &(r, class, selected) in &drawn {
+            self.paint_box(&painter, r, class, selected, &font);
         }
 
         // ---- cursor guidelines
@@ -2276,8 +2292,7 @@ impl App {
         font: &FontId,
     ) {
         let color = class_color(class);
-        let (fill_a, width) = if selected { (70, 2.0) } else { (28, 1.5) };
-        painter.rect_filled(r, 0.0, color.gamma_multiply_u8(fill_a));
+        let width = if selected { 2.0 } else { 1.5 };
         painter.rect_stroke(
             r,
             0.0,
