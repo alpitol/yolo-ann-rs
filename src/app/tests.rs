@@ -941,3 +941,59 @@ fn failures_are_warnings() {
     h.state_mut().set_status("ok");
     assert!(!h.state().status_warn);
 }
+
+#[test]
+fn hide_annotations_blocks_editing() {
+    let dir = make_dataset(&temp_root("hide_anns"));
+    let mut h = harness(&dir);
+    wait_loaded(&mut h);
+    h.key_press(Key::ArrowRight);
+    wait_loaded(&mut h);
+    assert_eq!(cur_name(&h), "img2.png");
+    let on_box = norm_to_screen(&h, 0.5, 0.5);
+    click(&mut h, on_box);
+    assert_eq!(h.state().selected, Some(0));
+
+    h.get_by_label("Hide annotations").click();
+    h.step();
+    h.step();
+    assert!(h.state().hide_anns);
+    assert_eq!(h.state().selected, None, "hiding deselects");
+    click(&mut h, on_box);
+    assert_eq!(h.state().selected, None, "hidden boxes can't be selected");
+    let (a, b) = (norm_to_screen(&h, 0.1, 0.1), norm_to_screen(&h, 0.3, 0.3));
+    drag(&mut h, a, b);
+    assert_eq!(h.state().anns["img2.png"].boxes.len(), 1, "no drawing");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.step();
+    assert_eq!(h.state().anns["img2.png"].boxes.len(), 1, "no undo");
+
+    h.get_by_label("Hide annotations").click();
+    h.step();
+    h.step();
+    click(&mut h, on_box);
+    assert_eq!(h.state().selected, Some(0));
+}
+
+#[test]
+fn side_panel_scrolls_when_too_short() {
+    let dir = make_dataset(&temp_root("side_scroll"));
+    let mut h = harness(&dir);
+    h.set_size(egui::vec2(1200.0, 300.0));
+    wait_loaded(&mut h);
+    let bottom = h.get_by_label("Shortcuts").rect();
+    assert!(bottom.top() > 300.0, "{bottom:?}");
+    for _ in 0..20 {
+        h.hover_at(pos2(100.0, 150.0));
+        h.event(Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -100.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: Modifiers::NONE,
+        });
+        h.step();
+    }
+    h.run_ok();
+    let bottom = h.get_by_label("Shortcuts").rect();
+    assert!(bottom.bottom() <= 300.0, "{bottom:?}");
+}

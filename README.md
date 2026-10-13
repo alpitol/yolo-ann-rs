@@ -66,6 +66,8 @@ cargo run --release
 
 In the image list, `*N` marks an image whose boxes were edited since the last import/export (N boxes). `[N]` marks a visited image with N boxes. Right-click an image for **Copy file name** and **Delete file…**, which after confirmation permanently deletes the image file and its label file in the labels folder, and drops the image's annotation data.
 
+**Hide annotations**, below the image list, shows the image without boxes. Box editing (drawing, selecting, undo/redo) is disabled until it is unticked. The side panel scrolls when it doesn't fit the window height.
+
 ## Saving & backup
 
 Labels come only from what you import, from `.txt` files next to the images, or from the YOLO layout's sibling `labels` folder (see `--labels`).

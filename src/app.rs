@@ -141,6 +141,8 @@ pub struct App {
     search: String,
     /// Show only images that have annotation data (an entry in `anns`).
     filter_data: bool,
+    /// Don't draw boxes; box editing is disabled meanwhile.
+    hide_anns: bool,
     cur: Option<usize>,
     /// The current image was untracked: leaving it must not re-create empty data.
     cur_untracked: bool,
@@ -202,6 +204,7 @@ impl App {
             visible: Vec::new(),
             search: String::new(),
             filter_data: false,
+            hide_anns: false,
             cur: None,
             cur_untracked: false,
             classes: Vec::new(),
@@ -1325,6 +1328,7 @@ impl App {
             self.selected = None;
         }
         if (undo || redo)
+            && !self.hide_anns
             && let Some(name) = self.cur_name().map(String::from)
         {
             let Some(ann) = self.anns.get_mut(&name) else {
@@ -1735,6 +1739,15 @@ impl App {
         {
             self.apply_filters();
         }
+        if ui
+            .checkbox(&mut self.hide_anns, "Hide annotations")
+            .on_hover_text("Show the image without boxes; boxes can't be edited meanwhile")
+            .changed()
+            && self.hide_anns
+        {
+            self.selected = None;
+            self.drag = Drag::None;
+        }
         if let Some(i) = delete {
             self.confirm_delete = Some(self.images[i].clone());
         }
@@ -2075,7 +2088,14 @@ impl App {
 
         // ---- left-button interaction
         let shift = ui.input(|i| i.modifiers.shift);
-        if resp.drag_started_by(PointerButton::Primary) {
+        let editable = !self.hide_anns;
+        if !editable
+            && (resp.drag_started_by(PointerButton::Primary)
+                || resp.clicked_by(PointerButton::Primary))
+        {
+            self.set_warning("Annotations are hidden: untick \"Hide annotations\" to edit");
+        }
+        if editable && resp.drag_started_by(PointerButton::Primary) {
             let origin = ui
                 .input(|i| i.pointer.press_origin())
                 .unwrap_or(rect.center());
@@ -2175,7 +2195,8 @@ impl App {
             }
             self.drag = Drag::None;
         }
-        if resp.clicked_by(PointerButton::Primary)
+        if editable
+            && resp.clicked_by(PointerButton::Primary)
             && let Some(p) = resp.interact_pointer_pos()
         {
             let (x, y) = to_norm(p);
@@ -2235,6 +2256,9 @@ impl App {
         if let Some((None, b)) = preview {
             drawn.push((to_screen(&b), b.class, true));
         }
+        if self.hide_anns {
+            drawn.clear();
+        }
         for &(r, class, selected) in &drawn {
             let fill_a = if selected { 70 } else { 28 };
             painter.rect_filled(r, 0.0, class_color(class).gamma_multiply_u8(fill_a));
@@ -2271,6 +2295,7 @@ impl App {
             ));
             if let Some(cls) = self.classes.get(self.cur_class)
                 && matches!(self.drag, Drag::None)
+                && !self.hide_anns
             {
                 painter.text(
                     p + vec2(12.0, 12.0),
@@ -2557,7 +2582,12 @@ impl eframe::App for App {
         egui::Panel::left("side")
             .resizable(true)
             .default_size(320.0)
-            .show(ui, |ui| self.side_panel(ui));
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("side_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| self.side_panel(ui))
+            });
         egui::CentralPanel::no_frame().show(ui, |ui| self.canvas(ui));
         self.quit_dialog(&ctx);
         self.delete_dialog(&ctx);
